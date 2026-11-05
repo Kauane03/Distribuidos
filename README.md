@@ -8,7 +8,7 @@
 
 ## 1. 📌 Contexto e Objetivos
 
-Este projeto adapta e simplifica um sistema real de rastreamento de pets (originalmente baseado em hardware embarcado, Laravel e Framework7), transformando-o em uma **solução distribuída autônoma, modular e escalável**.
+Este projeto adapta e simplifica um sistema real de rastreamento de pets , transformando-o em uma **solução distribuída autônoma, modular e escalável**.
 
 Como os dispositivos físicos reais (coleiras com GPS/rádio e gateways Wi-Fi) não estão fisicamente disponíveis, desenvolveu-se uma **suíte de simulação em Python** que emula fielmente o ciclo de vida e a transmissão de pacotes dos equipamentos físicos.
 
