@@ -1,0 +1,92 @@
+services:
+  # 1. Banco de Dados Relacional MySQL
+  mysql:
+    image: mysql:8.0
+    container_name: pet-tracker-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: pet_tracker_db
+      MYSQL_USER: petuser
+      MYSQL_PASSWORD: petpass
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u petuser -ppetpass || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 25
+      start_period: 60s
+
+  # 2. Broker MQTT (Eclipse Mosquitto)
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: pet-tracker-mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ./infrastructure/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto_data:/mosquitto/data
+
+  # 3. Backend (Node.js + Fastify + TypeScript + Drizzle ORM + WebSocket)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: pet-tracker-backend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      HOST: 0.0.0.0
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: petuser
+      DB_PASSWORD: petpass
+      DB_NAME: pet_tracker_db
+      MQTT_BROKER_URL: mqtt://mosquitto:1883
+      MQTT_CLIENT_ID: pet-tracker-backend
+    depends_on:
+      mysql:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+
+  # 4. Frontend Administrativo (React + TypeScript + Vite + Tailwind + Leaflet)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: pet-tracker-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "5173:80"
+    depends_on:
+      - backend
+
+  # 5. Simuladores de Dispositivos (Python 3 + Paho MQTT)
+  simulators:
+    build:
+      context: ./simulators
+      dockerfile: Dockerfile
+    container_name: pet-tracker-simulators
+    restart: unless-stopped
+    environment:
+      MQTT_HOST: mosquitto
+      MQTT_PORT: 1883
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      mosquitto:
+        condition: service_started
+      backend:
+        condition: service_started
+
+volumes:
+  mysql_data:
+  mosquitto_data:

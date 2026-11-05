@@ -1,0 +1,44 @@
+{
+  "name": "pet-tracker-backend",
+  "version": "1.0.0",
+  "description": "Backend distribuído em Node.js com Fastify, MQTT, WebSocket e Drizzle ORM",
+  "main": "src/server.ts",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/infrastructure/database/migrate.ts",
+    "db:seed": "tsx src/infrastructure/database/seed.ts"
+  },
+  "keywords": [
+    "distributed-systems",
+    "fastify",
+    "mqtt",
+    "websocket",
+    "drizzle-orm",
+    "iot"
+  ],
+  "author": "UFMA - Sistemas Distribuídos",
+  "license": "MIT",
+  "dependencies": {
+    "@fastify/cors": "^10.0.2",
+    "@fastify/websocket": "^11.0.2",
+    "dotenv": "^16.4.7",
+    "drizzle-orm": "^0.38.4",
+    "fastify": "^5.2.1",
+    "mqtt": "^5.10.4",
+    "mysql2": "^3.12.0",
+    "ws": "^8.18.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "@types/ws": "^8.5.14",
+    "drizzle-kit": "^0.30.4",
+    "pino-pretty": "^13.0.0",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3"
+  }
+}
