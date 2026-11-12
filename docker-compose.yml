@@ -111,6 +111,7 @@ services:
       INTERSCITY_URL: http://interscity:8000
       TOTAL_TRACKERS: 1500
       PYTHONUNBUFFERED: "1"
+    command: ["python", "simulators/main.py", "--interscity", "http://interscity:8000", "--count", "1500", "--interval", "3"]
     volumes:
       - ./simulators/interscity_resources.json:/app/simulators/interscity_resources.json
     depends_on:

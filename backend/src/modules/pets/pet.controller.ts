@@ -7,86 +7,38 @@ import { interscityService } from "../../infrastructure/interscity/index.js";
 export async function listPets() {
   const allPets = await db.select().from(pets).orderBy(desc(pets.createdAt));
 
-  // Para cada pet, busca tracker ativo e última localização
-  const petsWithDetails: any[] = await Promise.all(
-    allPets.map(async (pet) => {
-      const activeLink = await db.query.petTrackers.findFirst({
-        where: and(eq(petTrackers.petId, pet.id), isNull(petTrackers.dataFim)),
-        with: { tracker: true },
-      });
+  // Busca em lote único todos os vínculos ativos (evita 1500 queries sequenciais)
+  const activeLinks = await db.query.petTrackers.findMany({
+    where: isNull(petTrackers.dataFim),
+    with: { tracker: true },
+  });
 
-      let lastLocation = null;
-      if (activeLink?.tracker) {
-        const lastRastreio = await db.query.rastreios.findFirst({
-          where: eq(rastreios.petId, pet.id),
-          orderBy: [desc(rastreios.capturedAt)],
-          with: { stick: true },
-        });
+  const linksByPetId = new Map(activeLinks.map((l) => [l.petId, l]));
+  const latestLocations = interscityService.getLatestLocations();
+  const locationByPetId = new Map(latestLocations.map((loc) => [loc.petId, loc]));
 
-        if (lastRastreio) {
-          lastLocation = {
-            lat: Number(lastRastreio.lat),
-            lng: Number(lastRastreio.long),
-            rssi: lastRastreio.rssi ? Number(lastRastreio.rssi) : null,
-            qualidadeSinal: getSignalQuality(lastRastreio.rssi ? Number(lastRastreio.rssi) : null),
-            bateriaTracker: lastRastreio.bateriaTracker ? Number(lastRastreio.bateriaTracker) : null,
-            bateriaStick: lastRastreio.bateriaStick ? Number(lastRastreio.bateriaStick) : null,
-            capturedAt: lastRastreio.capturedAt.toISOString(),
-            stickRef: lastRastreio.stick?.stickRef || null,
-          };
-        }
-      }
+  return allPets.map((pet) => {
+    const activeLink = linksByPetId.get(pet.id);
+    const lastLocation = locationByPetId.get(pet.id);
 
-      return {
-        ...pet,
-        activeTracker: activeLink?.tracker || null,
-        activeLinkId: activeLink?.id || null,
-        lastLocation,
-      };
-    })
-  );
-
-  // Complementa com pets virtuais do InterSCity se necessário
-  const existingNames = new Set(petsWithDetails.map((p) => p.nome));
-  const resources = interscityService.getResources();
-
-  for (let i = 0; i < resources.length; i++) {
-    const res = resources[i];
-    if (!existingNames.has(res.pet_name)) {
-      petsWithDetails.push({
-        id: 1000 + i,
-        nome: res.pet_name,
-        raca: "Pet Virtual",
-        dataNascimento: "2024-01-01",
-        status: true,
-        pathFoto: "https://images.unsplash.com/photo-1543466835-00a7907e9de1?auto=format&fit=crop&q=80&w=200",
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        activeTracker: {
-          id: 1000 + i,
-          trackerRef: res.tracker_ref,
-          status: true,
-          bateria: 85,
-          isOnline: true,
-          lastSeen: new Date(),
-        },
-        activeLinkId: 1000 + i,
-        lastLocation: {
-          lat: res.lat,
-          lng: res.lon,
-          rssi: 78,
-          qualidadeSinal: "Excelente",
-          bateriaTracker: 85,
-          bateriaStick: 98,
-          capturedAt: new Date().toISOString(),
-          stickRef: "STICK_CCET_UFMA",
-        },
-      });
-      existingNames.add(res.pet_name);
-    }
-  }
-
-  return petsWithDetails;
+    return {
+      ...pet,
+      activeTracker: activeLink?.tracker || null,
+      activeLinkId: activeLink?.id || null,
+      lastLocation: lastLocation
+        ? {
+            lat: lastLocation.lat,
+            lng: lastLocation.lng,
+            rssi: lastLocation.rssi,
+            qualidadeSinal: lastLocation.qualidadeSinal,
+            bateriaTracker: lastLocation.bateriaTracker,
+            bateriaStick: lastLocation.bateriaStick,
+            capturedAt: lastLocation.capturedAt,
+            stickRef: lastLocation.stickRef,
+          }
+        : null,
+    };
+  });
 }
 
 export async function getPetById(id: number) {

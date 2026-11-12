@@ -138,10 +138,7 @@ def main():
             interscity_url=interscity_url,
             stick_ref="STICK_CENTRO_HISTORICO" if i % 2 == 0 else "STICK_CCET_UFMA",
             start_lat=lat,
-            start_lon=lon
-        )
-            center_lat=UFMA_CAMPUS_LAT + lat_offset,
-            center_lon=UFMA_CAMPUS_LON + lon_offset,
+            start_lon=lon,
             interval_seconds=args.interval
         )
         sim.start()

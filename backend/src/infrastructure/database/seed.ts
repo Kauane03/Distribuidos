@@ -198,7 +198,7 @@ export async function seedVirtualPets(targetCount = 1500) {
         await db.insert(rastreios).values({
           petId: newPet.id,
           trackerId: newTracker.id,
-          stickId: (item.index % 5) + 1,
+          stickId: (item.index % 3) + 1,
           lat: String(item.lat),
           long: String(item.lon),
           rssi: String(75 + (item.index % 20)),
@@ -226,7 +226,7 @@ export async function seedVirtualPets(targetCount = 1500) {
       await db.insert(rastreios).values({
         petId: pet.id,
         trackerId: link?.trackerId ?? 1,
-        stickId: (pet.id % 5) + 1,
+        stickId: (pet.id % 3) + 1,
         lat: String(coords.lat),
         long: String(coords.lon),
         rssi: "82",
