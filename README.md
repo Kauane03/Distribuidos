@@ -21,6 +21,9 @@ Originalmente estruturado sobre um backend monolítico, o sistema foi refatorado
 
 ## 2. 🏛️ Arquitetura da Solução Distribuída
 
+> 📊 **Documentação Visual Completa:** Para visualizar todos os fluxogramas em detalhes (visão geral, fluxo de ingestão, teste de 1 milhão de requisições, máquina de estados e topologia Docker), consulte o arquivo dedicado:  
+> 👉 [**FLUXOGRAMA.md**](file:///home/yuri/Documentos/UFMA/Kauane/projeto-final/Distribuidos/FLUXOGRAMA.md)
+
 ```
 +---------------------------------------------------------------------------------------------------+
 |                            NÓS DE BORDA (IoT) - TESTE DE CARGA                                    |
