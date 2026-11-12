@@ -96,7 +96,29 @@ Originalmente estruturado sobre um backend monolítico, o sistema foi refatorado
 
 ---
 
-### Opção 1: Execução com Escalabilidade Horizontal via Docker (Recomendado)
+### Opção 1: Execução com a Plataforma Oficial InterSCity (Microsserviços Oficiais)
+
+Para rodar a **stack oficial completa da Plataforma InterSCity** (Kong API Gateway, Resource Cataloguer, Data Collector, MongoDB, PostgreSQL e RabbitMQ):
+
+```bash
+cd Distribuidos
+
+# Sobe os microsserviços oficiais do InterSCity e o cluster Pet Tracker:
+./start.sh official
+```
+
+Ou gerenciando os containers manualmente:
+```bash
+# 1. Inicia a stack oficial do InterSCity
+docker compose -f docker-compose.interscity.yml up -d
+
+# 2. Inicia o cluster do Pet Tracker escalado com 3 réplicas
+docker compose up --build --scale backend=3
+```
+
+---
+
+### Opção 2: Execução com Escalabilidade Horizontal via Docker (Modo Integrado)
 
 O script unificado `start.sh` facilita a execução e orquestração do cluster:
 
@@ -121,7 +143,7 @@ Ao finalizar a inicialização:
 
 ---
 
-### Opção 2: Execução do Teste de Carga com 500 Pets
+### Opção 3: Execução do Teste de Carga com 500 Pets
 
 O teste de carga pode ser executado em duas etapas simples:
 

@@ -19,6 +19,13 @@ elif [ "$MODE" = "scale" ]; then
     REPLICAS=${2:-3}
     echo "⚖️  Iniciando ambiente com Escalabilidade Horizontal (${REPLICAS} réplicas do backend + Nginx LB)..."
     docker compose up --build --scale backend="${REPLICAS}"
+elif [ "$MODE" = "official" ]; then
+    echo "🏛️  Iniciando Plataforma Oficial do InterSCity (Microsserviços USP/UFMA)..."
+    docker compose -f docker-compose.interscity.yml up -d
+    echo "Aguardando Kong API Gateway e microsserviços na porta 8000..."
+    sleep 4
+    echo "Iniciando cluster Pet Tracker com Escalabilidade Horizontal..."
+    docker compose up --build --scale backend=3
 elif [ "$MODE" = "infra" ]; then
     echo "📦 Subindo infraestrutura base (MySQL + Mosquitto + InterSCity + Load Balancer)..."
     docker compose up -d mysql mosquitto interscity loadbalancer
@@ -30,9 +37,10 @@ elif [ "$MODE" = "sim" ]; then
     echo "🚀 Iniciando simulador Python com 500 pets virtuais..."
     python3 "$DIR/simulators/main.py" --interval 3
 else
-    echo "Uso: ./start.sh [docker | scale [N] | infra | seed | sim]"
+    echo "Uso: ./start.sh [docker | scale [N] | official | infra | seed | sim]"
     echo "  docker    : Executa todos os serviços via Docker Compose (padrão)"
     echo "  scale [N] : Sobe o cluster com N réplicas do backend (ex: ./start.sh scale 3)"
+    echo "  official  : Sobe a plataforma oficial completa do InterSCity (USP/UFMA)"
     echo "  infra     : Sobe apenas MySQL, Mosquitto, InterSCity e LoadBalancer"
     echo "  seed      : Registra os 500 recursos no catálogo do InterSCity"
     echo "  sim       : Executa os simuladores Python na máquina local"

@@ -1,0 +1,110 @@
+version: '3.7'
+
+# ==============================================================================
+# Plataforma Oficial InterSCity (USP / UFMA - Cidades Inteligentes)
+# Orquestração completa de Microsserviços e API Gateway Kong
+# ==============================================================================
+
+services:
+  # 1. Banco de Dados PostgreSQL (Kong API Gateway & Resource Cataloguer)
+  interscity-postgres:
+    image: postgres:9.6-alpine
+    container_name: interscity-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: kong
+    volumes:
+      - interscity_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # 2. Banco de Dados MongoDB (Data Collector - Armazenamento de Séries Temporais IoT)
+  interscity-mongo:
+    image: mongo:3.6
+    container_name: interscity-mongo
+    restart: unless-stopped
+    volumes:
+      - interscity_mongo_data:/data/db
+
+  # 3. Message Broker RabbitMQ (Mensageria e Barramento de Eventos InterSCity)
+  interscity-rabbitmq:
+    image: rabbitmq:3.8
+    container_name: interscity-rabbitmq
+    restart: unless-stopped
+    ports:
+      - "5672:5672"
+
+  # 4. Cache em Memória Redis (Indexação Rápida de Recursos)
+  interscity-redis:
+    image: redis:alpine
+    container_name: interscity-redis
+    restart: unless-stopped
+
+  # 5. Kong API Gateway (Ponto Único de Entrada do Middleware InterSCity - Porta 8000)
+  interscity-kong:
+    image: kong:0.11.2
+    container_name: interscity-kong
+    restart: unless-stopped
+    environment:
+      - KONG_DATABASE=postgres
+      - KONG_PG_HOST=interscity-postgres
+      - KONG_PG_USER=postgres
+      - KONG_PG_PASSWORD=admin
+    command: bash -c "kong migrations up && kong start"
+    ports:
+      - "8000:8000"
+      - "8001:8001"
+    depends_on:
+      interscity-postgres:
+        condition: service_healthy
+
+  # 6. Microsserviço Oficial: Resource Cataloguer (Catálogo e Metadados dos Recursos)
+  interscity-resource-cataloguer:
+    image: dylanguedes/resource-cataloguer:stable
+    container_name: interscity-resource-cataloguer
+    restart: unless-stopped
+    depends_on:
+      - interscity-postgres
+      - interscity-redis
+      - interscity-rabbitmq
+      - interscity-kong
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: admin
+      POSTGRES_HOST: interscity-postgres
+      POSTGRES_PORT: 5432
+      DATACOLLECTOR_HOST: interscity-data-collector:3000
+      RABBITMQ_HOST: interscity-rabbitmq
+      KONG_URI: http://interscity-kong:8001
+      SELF_HOST: interscity-resource-cataloguer:3000
+      REGISTER_METHOD: target
+      REDIS_HOST: interscity-redis
+      REDIS_PORT: 6379
+
+  # 7. Microsserviço Oficial: Data Collector (Ingestão de Dados e Séries Temporais IoT)
+  interscity-data-collector:
+    image: dylanguedes/data-collector:stable
+    container_name: interscity-data-collector
+    restart: unless-stopped
+    depends_on:
+      - interscity-mongo
+      - interscity-rabbitmq
+      - interscity-kong
+    environment:
+      MONGO_USER: admin
+      MONGO_PASSWORD: admin
+      MONGO_HOST: interscity-mongo
+      MONGO_PORT: 27017
+      RABBITMQ_HOST: interscity-rabbitmq
+      KONG_URI: http://interscity-kong:8001
+      SELF_HOST: interscity-data-collector:3000
+      REGISTER_METHOD: target
+
+volumes:
+  interscity_pg_data:
+  interscity_mongo_data:
