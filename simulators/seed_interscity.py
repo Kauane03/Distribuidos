@@ -45,6 +45,29 @@ CATALOG_ENDPOINT = f"{INTERSCITY_URL}/catalog/resources"
 OUTPUT_FILE = os.path.join(BASE_DIR, "interscity_resources.json")
 BACKEND_DATA_FILE = os.path.join(PROJECT_ROOT, "backend", "data", "interscity_resources.json")
 
+def ensure_capabilities(session=None):
+    """
+    Garante o pré-registro das capacidades no catálogo oficial do InterSCity (USP/UFMA),
+    evitando erros de CapabilityNotFound.
+    """
+    capabilities = ["location", "battery", "rssi", "speed", "status"]
+    cap_url = f"{INTERSCITY_URL}/catalog/capabilities"
+    for cap in capabilities:
+        payload = {"name": cap, "capability_type": "sensor", "description": f"Capacidade {cap}"}
+        try:
+            if requests:
+                req_func = session.post if session else requests.post
+                req_func(cap_url, json=payload, timeout=2.0)
+            else:
+                req = urllib.request.Request(
+                    cap_url,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json"}
+                )
+                urllib.request.urlopen(req, timeout=2.0)
+        except Exception:
+            pass
+
 def register_single_resource(index: int, session=None) -> Dict[str, Any]:
     """
     Registra um tracker virtual individual no catálogo do InterSCity.
@@ -128,6 +151,7 @@ def seed_resources(total: int = TOTAL_TRACKERS):
         session.mount("https://", adapter)
 
     # Utiliza pool de threads para acelerar as 500 requisições HTTP
+    ensure_capabilities(session)
     with ThreadPoolExecutor(max_workers=20) as executor:
         futures = {
             executor.submit(register_single_resource, i, session): i

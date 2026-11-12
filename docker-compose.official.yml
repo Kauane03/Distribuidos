@@ -1,0 +1,112 @@
+# ==============================================================================
+# Plataforma Oficial InterSCity (USP / UFMA - Cidades Inteligentes)
+# Override para substituição do emulador pelo ecossistema oficial com Kong API Gateway
+# ==============================================================================
+
+services:
+  # 1. Substitui o interscity padrão pelo Kong API Gateway oficial (porta 8000)
+  interscity:
+    build: !reset null
+    image: kong:0.11.2
+    container_name: pet-tracker-interscity-kong
+    restart: unless-stopped
+    environment:
+      - KONG_DATABASE=postgres
+      - KONG_PG_HOST=interscity-postgres
+      - KONG_PG_USER=postgres
+      - KONG_PG_PASSWORD=admin
+    command: bash -c "kong migrations up && kong start"
+    ports:
+      - "8000:8000"
+      - "8001:8001"
+    depends_on:
+      interscity-postgres:
+        condition: service_healthy
+
+  # 2. Banco de Dados PostgreSQL (Kong API Gateway & Resource Cataloguer)
+  interscity-postgres:
+    image: postgres:9.6-alpine
+    container_name: interscity-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: kong
+    volumes:
+      - interscity_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+
+  # 3. Banco de Dados MongoDB (Data Collector)
+  interscity-mongo:
+    image: mongo:3.6
+    container_name: interscity-mongo
+    restart: unless-stopped
+    volumes:
+      - interscity_mongo_data:/data/db
+
+  # 4. Message Broker RabbitMQ
+  interscity-rabbitmq:
+    image: rabbitmq:3.8
+    container_name: interscity-rabbitmq
+    restart: unless-stopped
+    ports:
+      - "5672:5672"
+
+  # 5. Cache em Memória Redis
+  interscity-redis:
+    image: redis:alpine
+    container_name: interscity-redis
+    restart: unless-stopped
+
+  # 6. Microsserviço Oficial: Resource Cataloguer
+  interscity-resource-cataloguer:
+    image: dylanguedes/resource-cataloguer:stable
+    container_name: interscity-resource-cataloguer
+    restart: unless-stopped
+    depends_on:
+      interscity-postgres:
+        condition: service_healthy
+      interscity:
+        condition: service_started
+    command: bash -c "bundle exec rails s -p 3000 -b 0.0.0.0"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: admin
+      POSTGRES_HOST: interscity-postgres
+      POSTGRES_PORT: 5432
+      DATACOLLECTOR_HOST: interscity-data-collector:3000
+      RABBITMQ_HOST: interscity-rabbitmq
+      KONG_URI: http://interscity:8001
+      SELF_HOST: interscity-resource-cataloguer:3000
+      REGISTER_METHOD: target
+      REDIS_HOST: interscity-redis
+      REDIS_PORT: 6379
+
+  # 7. Microsserviço Oficial: Data Collector
+  interscity-data-collector:
+    image: dylanguedes/data-collector:stable
+    container_name: interscity-data-collector
+    restart: unless-stopped
+    depends_on:
+      interscity:
+        condition: service_started
+    command: bash -c "bundle exec rails s -p 3000 -b 0.0.0.0"
+    environment:
+      MONGO_USER: admin
+      MONGO_PASSWORD: admin
+      MONGO_HOST: interscity-mongo
+      MONGO_PORT: 27017
+      MONGO_CACHE_HOST: interscity-mongo
+      MONGO_CACHE_PORT: 27017
+      RABBITMQ_HOST: interscity-rabbitmq
+      KONG_URI: http://interscity:8001
+      SELF_HOST: interscity-data-collector:3000
+      REGISTER_METHOD: target
+
+volumes:
+  interscity_pg_data:
+  interscity_mongo_data:
