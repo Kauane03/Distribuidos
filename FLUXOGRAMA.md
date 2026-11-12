@@ -1,279 +1,353 @@
-# 🗺️ Fluxogramas e Diagramas de Arquitetura — Pet Tracker Distribuído
+# 🗺️ Diagramas de Atividade e Arquitetura — Pet Tracker Distribuído
 
 > **Universidade Federal do Maranhão (UFMA)**  
 > **Disciplina:** Sistemas Distribuídos  
 > **Projeto:** Sistema Distribuído de Rastreamento de Pets em Tempo Real  
 > **Autora:** Kauane  
+> **Padrão dos Diagramas:** [PlantUML Activity Diagram (Beta Syntax)](https://plantuml.com/activity-diagram-beta) + [Mermaid](https://mermaid.js.org/)
 
-Este documento apresenta a especificação visual e arquitetural completa do sistema, estruturada em diagramas **Mermaid**. O projeto demonstra conceitos fundamentais de computação distribuída: **escalabilidade horizontal, balanceamento de carga Round-Robin, tolerância a falhas, desacoplamento assíncrono via mensageria MQTT e consistência eventual de dados**.
+Este documento apresenta a especificação comportamental e arquitetural completa do sistema, estruturada através de **Diagramas de Atividade PlantUML (sintaxe nova / beta com swimlanes, condicionais, forks paralelos e repetições)** e diagramas **Mermaid**.
 
 ---
 
 ## 📌 Sumário
-1. [Visão Geral da Arquitetura End-to-End](#1-visão-geral-da-arquitetura-end-to-end)
-2. [Fluxo de Ingestão de Telemetria e Notificação em Tempo Real](#2-fluxo-de-ingestão-de-telemetria-e-notificação-em-tempo-real)
-3. [Topologia de Balanceamento de Carga e Teste de 1 Milhão de Requisições](#3-topologia-de-balanceamento-de-carga-e-teste-de-1-milhão-de-requisições)
-4. [Ciclo de Vida e Máquina de Estados da Coleira IoT](#4-ciclo-de-vida-e-máquina-de-estados-da-coleira-iot)
-5. [Topologia de Rede Docker e Isolamento](#5-topologia-de-rede-docker-e-isolamento)
+1. [PlantUML: Fluxo de Atividade Geral do Sistema (Swimlanes)](#-1-plantuml-fluxo-de-atividade-geral-do-sistema-com-swimlanes)
+2. [PlantUML: Ingestão de Telemetria, Vitais e Cerca Virtual (Geofence)](#-2-plantuml-ingestão-de-telemetria-vitais-e-cerca-virtual)
+3. [PlantUML: Balanceamento Round-Robin e Teste de 1 Milhão de Requisições](#-3-plantuml-balanceamento-round-robin-e-teste-de-1-milhão-de-requisições)
+4. [PlantUML: Ciclo de Vida da Coleira IoT e Economia de Bateria](#-4-plantuml-ciclo-de-vida-da-coleira-iot-e-economia-de-bateria)
+5. [Mermaid: Visão Geral da Arquitetura de Componentes](#-5-mermaid-visão-geral-da-arquitetura-de-componentes)
+6. [Mermaid: Topologia de Rede Docker e Portas](#-6-mermaid-topologia-de-rede-docker-e-portas)
 
 ---
 
-## 1. Visão Geral da Arquitetura End-to-End
+## 🚀 1. PlantUML: Fluxo de Atividade Geral do Sistema (com Swimlanes)
 
-O diagrama abaixo descreve a interação entre as 4 camadas do sistema distribuído:
-- **Camada Edge/IoT:** Dispositivos coleira e simuladores emulando telemetria em alta frequência.
-- **Camada de Middleware & Ingestão:** InterSCity Platform e Broker Eclipse Mosquitto.
-- **Camada de Aplicação & Cluster:** Nginx (Proxy Reverso / Load Balancer) distribuindo carga entre 3 réplicas Fastify (Node.js).
-- **Camada de Persistência & Frontend:** Banco de Dados Relacional MySQL e Single Page Application React.
+Este diagrama modela a sequência operacional de ponta a ponta, dividida nas raias (*swimlanes*) dos componentes distribuídos: **Coleira IoT**, **Broker MQTT**, **Load Balancer Nginx**, **Cluster Fastify**, **MySQL** e **Frontend Web**.
+
+```plantuml
+@startuml
+title Fluxo de Atividade Geral do Sistema Distribuído - Pet Tracker
+skinparam ActivityFontSize 12
+skinparam ActivityDiamondFontSize 11
+skinparam defaultFontName sans-serif
+
+|Coleira IoT (Edge)|
+start
+:Ligar dispositivo / simulador;
+:Capturar coordenadas GPS e sensores vitais\n(latitude, longitude, BPM, bateria);
+:Empacotar payload JSON de telemetria;
+:Publicar no tópico MQTT 'pets/{id}/telemetry';
+
+|Broker MQTT (Mosquitto)|
+:Receber pacote de telemetria via TCP/IP (1883);
+:Verificar clientes inscritos no tópico;
+fork
+    :Rotear para réplicas do Backend (Cluster);
+fork again
+    :Disparar streaming WebSocket para navegadores conectados (9001);
+end fork
+
+|Nginx (Load Balancer)|
+:Receber conexões e requisições HTTP da API;
+if (Instâncias ativas no pool upstream?) then (sim)
+    :Aplicar algoritmo Round-Robin;
+    :Encaminhar requisição para Réplica disponível (3001);
+else (não)
+    #Pink:Retornar HTTP 502 Bad Gateway;
+    stop
+endif
+
+|Cluster Fastify (Réplica N)|
+:Receber payload e validar integridade;
+:Executar checagem de regras de negócio:\n1. Bateria <= 20%?\n2. Frequência cardíaca fora do padrão?\n3. Coordenada fora do polígono de segurança?;
+
+|MySQL Database|
+:Gravar histórico em 'pet_telemetry';
+:Atualizar última localização e status em 'pets';
+
+|Cluster Fastify (Réplica N)|
+if (Violação de regras detectada?) then (sim)
+    |MySQL Database|
+    :Inserir registro em 'alerts';
+    |Cluster Fastify (Réplica N)|
+    :Publicar evento no tópico 'pets/{id}/alerts';
+    |Broker MQTT (Mosquitto)|
+    :Entregar alerta via WebSocket;
+    |Frontend Web (React/Leaflet)|
+    #Yellow:Exibir notificação visual de alerta de fuga/saúde;
+else (não)
+    |Frontend Web (React/Leaflet)|
+    #LightGreen:Atualizar posição do marcador no mapa sem refresh;
+endif
+
+|Frontend Web (React/Leaflet)|
+:Renderizar trajeto do pet e painel de telemetria;
+stop
+@enduml
+```
+
+---
+
+## ⚡ 2. PlantUML: Ingestão de Telemetria, Vitais e Cerca Virtual
+
+Foco no algoritmo interno executado para cada medição, demonstrando decisões, ramificações e persistência condicional.
+
+```plantuml
+@startuml
+title Algoritmo de Processamento de Telemetria e Detecção de Violação (Geofence)
+skinparam conditionStyle inside
+skinparam defaultFontName sans-serif
+
+start
+:Receber pacote de telemetria;
+note right
+Payload:
+{
+  pet_id: string,
+  lat: float,
+  lng: float,
+  heart_rate: int,
+  battery: int,
+  timestamp: string
+}
+end note
+
+:Sanitizar dados e validar coordenadas (-90 a 90, -180 a 180);
+
+if (Coordenadas válidas?) then (sim)
+    :Carregar dados da cerca virtual do pet (Geofence);
+    
+    if (Ponto (lat, lng) está contido no polígono seguro?) then (sim)
+        :Manter status do pet como 'SAFE';
+    else (não)
+        #Pink:Marcar status como 'OUT_OF_BOUNDS';
+        :Criar objeto de Alerta de Fuga (Severidade Alta);
+        :Disparar notificação de alarme;
+    endif
+    
+    if (heart_rate < 50 ou heart_rate > 160) then (sim)
+        #Orange:Criar objeto de Alerta de Saúde (BPM Anômalo);
+        :Disparar notificação de saúde crítica;
+    else (não)
+        :Vitais estáveis;
+    endif
+
+    if (battery <= 20) then (sim)
+        #Yellow:Criar Alerta de Bateria Fraca;
+    endif
+
+    :Persistir telemetria e alertas no banco relacional;
+    :Emitir evento de atualização no canal em tempo real;
+    #LightGreen:Concluir processamento com sucesso (ACK);
+    stop
+else (não)
+    #Pink:Descartar payload corrompido;
+    :Registrar log de aviso no logger;
+    end
+endif
+@enduml
+```
+
+---
+
+## ⚖️ 3. PlantUML: Balanceamento Round-Robin e Teste de 1 Milhão de Requisições
+
+Demonstração do fluxo de estresse distribuído e da sincronização de contadores compartilhados através de conexões persistentes (*keep-alive*).
+
+```plantuml
+@startuml
+title Fluxo de Balanceamento de Carga e Teste de Estresse de 1.000.000 de Requisições
+skinparam defaultFontName sans-serif
+
+start
+:Usuário clica em 'Iniciar Teste de 1 Milhão' na Interface Web;
+:Disparar POST /api/cluster/benchmark/start;
+
+|Nginx Load Balancer|
+:Receber requisição de início;
+:Roteador encaminha para o Backend via Round-Robin;
+
+|Cluster Backend Fastify|
+:Inicializar registro de benchmark no MySQL:
+- total_requests = 1.000.000
+- completed_requests = 0
+- status = 'RUNNING';
+
+:Iniciar rotina assíncrona com pool HTTP Keep-Alive (128 conexões concorrentes);
+
+repeat
+    :Disparar lote de requisições HTTP para http://loadbalancer:3000/api/health;
+    
+    |Nginx Load Balancer|
+    if (Índice da requisição) then (req % 3 == 1)
+        :Encaminhar para Réplica 1 (172.28.0.x:3001);
+        note right: Header HTTP: X-Served-By: 172.28.0.x
+    elseif (req % 3 == 2)
+        :Encaminhar para Réplica 2 (172.28.0.y:3001);
+        note right: Header HTTP: X-Served-By: 172.28.0.y
+    else (req % 3 == 0)
+        :Encaminhar para Réplica 3 (172.28.0.z:3001);
+        note right: Header HTTP: X-Served-By: 172.28.0.z
+    endif
+    
+    |Cluster Backend Fastify|
+    :Processar requisição e responder HTTP 200 OK;
+    :Incrementar contadores da réplica correspondente;
+    
+    if (Lote atingiu 5.000 requisições?) then (sim)
+        |MySQL Database|
+        :Atualizar progresso na tabela 'cluster_benchmark';
+        |Cluster Backend Fastify|
+    endif
+
+repeat while (completed_requests < 1.000.000?) is (sim) not (não)
+
+|MySQL Database|
+:Gravar status = 'FINISHED' e timestamp final;
+
+|Frontend Web (React/Leaflet)|
+:Polling em tempo real a cada 1s consulta /api/cluster/benchmark/status;
+:Exibir 100% concluído com distribuição idêntica (~33,3% por réplica);
+#LightGreen:Teste de 1 Milhão finalizado com sucesso;
+stop
+@enduml
+```
+
+---
+
+## 🔋 4. PlantUML: Ciclo de Vida da Coleira IoT e Economia de Bateria
+
+Representação do algoritmo de loop contínuo embarcado na coleira rastreadora.
+
+```plantuml
+@startuml
+title Ciclo de Vida do Dispositivo IoT e Gerenciamento de Energia
+skinparam defaultFontName sans-serif
+
+start
+:Inicialização da Coleira (Hardware Boot);
+:Conectar à rede e ao Broker MQTT;
+
+while (Dispositivo energizado?) is (sim)
+    :Ler sensores: Antena GPS + Sensor de Pulso + Nível de Carga;
+    
+    if (Nível de Bateria) then (> 20%)
+        :Modo de Operação Normal;
+        :Empacotar telemetria completa;
+        :Enviar pacote MQTT (QoS 0/1);
+        :Aguardar intervalo padrão (5 segundos);
+    elseif (Nível de Bateria > 5%) then (<= 20%)
+        #Yellow:Modo de Economia de Energia (Eco Mode);
+        :Desligar módulo de alta precisão GPS;
+        :Utilizar triangulação por antenas locais;
+        :Empacotar telemetria simplificada;
+        :Enviar pacote MQTT com flag 'battery_low';
+        :Aguardar intervalo estendido (30 segundos);
+    else (Crítico <= 5%)
+        #Pink:Modo de Sobrevivência (Emergency);
+        :Enviar último pacote 'EMERGENCY_LAST_GASP';
+        :Suspender sensores secundários;
+        :Desconectar rádio e entrar em Deep Sleep;
+        detach
+    endif
+endwhile (não)
+
+:Desligamento ordenado;
+stop
+@enduml
+```
+
+---
+
+## 🏛️ 5. Mermaid: Visão Geral da Arquitetura de Componentes
+
+Para referência rápida e visualização gráfica imediata no GitHub:
 
 ```mermaid
 flowchart TD
-    subgraph EDGE["Camada Edge & IoT (Dispositivos)"]
-        D1["Coleira IoT 1 (GPS, Batimentos, Bateria)"]
-        D2["Coleira IoT 2 (GPS, Batimentos, Bateria)"]
-        DN["Coleira IoT N (Simuladores em Lote)"]
+    subgraph EDGE["1. Camada Edge & IoT"]
+        D1["Coleira 1 (GPS, Vitais)"]
+        D2["Coleira 2 (GPS, Vitais)"]
+        DN["Simulador 1.500 Pets"]
     end
 
-    subgraph BROKER["Middleware & Mensageria Pub/Sub"]
-        MQTT["Broker MQTT (Eclipse Mosquitto)<br/>Porta: 1883 / 9001 (WS)"]
-        INTER["InterSCity Middleware<br/>Porta: 8000 (Resource Adaptor)"]
+    subgraph BROKER["2. Middleware & Mensageria"]
+        MQTT["Broker MQTT Mosquitto<br/>(1883 TCP / 9001 WS)"]
+        INTER["InterSCity Platform<br/>(Porta 8000)"]
     end
 
-    subgraph LOADBALANCER["Ingresso & Balanceamento"]
-        NGINX["Nginx Load Balancer<br/>Porta: 3000<br/>Algoritmo: Round-Robin com KeepAlive"]
+    subgraph INGRESS["3. Balanceamento de Carga"]
+        NGINX["Nginx Load Balancer<br/>(Porta 3000 / Round-Robin)"]
     end
 
-    subgraph CLUSTER["Cluster de Aplicação (Backend Fastify)"]
-        B1["Backend Réplica 1<br/>Porta: 3001 | IP: 172.28.0.x"]
-        B2["Backend Réplica 2<br/>Porta: 3001 | IP: 172.28.0.y"]
-        B3["Backend Réplica 3<br/>Porta: 3001 | IP: 172.28.0.z"]
+    subgraph CLUSTER["4. Cluster de Aplicação"]
+        B1["Réplica 1 (3001)"]
+        B2["Réplica 2 (3001)"]
+        B3["Réplica 3 (3001)"]
     end
 
-    subgraph STORAGE["Camada de Dados Compartilhada"]
-        MYSQL[("MySQL 8.0 Cluster Storage<br/>Porta: 3306<br/>Pets, Logs, Alertas, Benchmark")]
+    subgraph STORAGE["5. Banco de Dados"]
+        MYSQL[("MySQL 8.0 Cluster Storage<br/>(Porta 3306)")]
     end
 
-    subgraph CLIENTS["Camada de Apresentação & Usuário"]
-        SPA["Frontend SPA (React + Vite + Leaflet)<br/>Porta: 80 / 5173"]
-        ADM["Painel de Monitoramento do Cluster<br/>(Visualização de Carga em Tempo Real)"]
+    subgraph PRESENTATION["6. Frontend Web"]
+        REACT["React SPA + Leaflet Maps<br/>(Porta 80 / 5173)"]
     end
 
-    %% Relações Edge
-    D1 -->|"Publica coordenadas e vitais"| MQTT
-    D2 -->|"Publica coordenadas e vitais"| MQTT
-    DN -->|"Telemetria simulada (/sensor/data)"| INTER
-    INTER -->|"Encaminha eventos"| MQTT
+    D1 & D2 -->|"MQTT Publish"| MQTT
+    DN -->|"HTTP POST /data"| INTER
+    INTER --> MQTT
 
-    %% Relações MQTT -> Cluster
-    MQTT <-->|"Subscrição WebSocket & MQTT Topics"| B1
-    MQTT <-->|"Subscrição WebSocket & MQTT Topics"| B2
-    MQTT <-->|"Subscrição WebSocket & MQTT Topics"| B3
-    MQTT -.->|"Streaming direto via WS"| SPA
+    MQTT <-->|"WebSocket / MQTT"| B1 & B2 & B3
+    MQTT -.->|"WebSocket Direct"| REACT
 
-    %% Relações HTTP Clients -> Load Balancer
-    SPA -->|"Requisições REST API & Gestão"| NGINX
-    ADM -->|"Disparo de Carga (1M Req) & Polling"| NGINX
+    REACT -->|"HTTP Requests"| NGINX
+    NGINX -->|"1/3 carga"| B1
+    NGINX -->|"1/3 carga"| B2
+    NGINX -->|"1/3 carga"| B3
 
-    %% Relações Load Balancer -> Cluster
-    NGINX -->|"1/3 das requisições (Round-Robin)"| B1
-    NGINX -->|"1/3 das requisições (Round-Robin)"| B2
-    NGINX -->|"1/3 das requisições (Round-Robin)"| B3
-
-    %% Relações Cluster -> Storage
-    B1 -->|"Pool de Conexões"| MYSQL
-    B2 -->|"Pool de Conexões"| MYSQL
-    B3 -->|"Pool de Conexões"| MYSQL
+    B1 & B2 & B3 -->|"Pool MySQL"| MYSQL
 ```
 
 ---
 
-## 2. Fluxo de Ingestão de Telemetria e Notificação em Tempo Real
-
-Este diagrama de sequência detalha o ciclo de vida de uma leitura de telemetria emitida por uma coleira até a sua persistência e exibição no mapa interativo:
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Pet as Coleira IoT (Pet)
-    participant Broker as Eclipse Mosquitto (MQTT)
-    participant Backend as Cluster Backend (Fastify)
-    participant DB as MySQL Database
-    participant UI as Painel Web (React/Leaflet)
-
-    Pet->>Broker: PUBLISH topic: `pets/{petId}/telemetry`<br/>{lat, lng, heart_rate, battery, timestamp}
-    Note over Broker: Desacoplamento assíncrono:<br/>Broker recebe e roteia mensagem
-    Broker-->>Backend: Mensagem entregue às réplicas inscritas
-    
-    activate Backend
-    Backend->>Backend: Valida integridade e limites de geofence (cerca virtual)
-    Backend->>DB: INSERT INTO pet_telemetry / UPDATE pets SET last_seen
-    
-    alt Pet saiu da cerca ou vitais anormais
-        Backend->>DB: INSERT INTO alerts (pet_id, type, severity)
-        Backend->>Broker: PUBLISH topic: `pets/{petId}/alerts`
-        Broker-->>UI: Notificação Push WebSocket
-    end
-    
-    Backend->>Broker: PUBLISH topic: `pets/{petId}/positions` (atualização filtrada)
-    deactivate Backend
-    
-    Broker-->>UI: WebSocket Broadcast (atualiza marcador no mapa Leaflet)
-    UI->>UI: Renderiza deslocamento do pet sem refresh de página
-```
-
----
-
-## 3. Topologia de Balanceamento de Carga e Teste de 1 Milhão de Requisições
-
-Demonstração do funcionamento do Nginx como ponto único de entrada (**Reverse Proxy / Load Balancer**) aplicando o algoritmo **Round-Robin** com pool de conexões persistentes (`keepalive 128`), permitindo a vazão de até 1.000.000 de requisições distribuídas homogeneamente:
-
-```mermaid
-flowchart LR
-    subgraph CLIENT["Geradores de Carga"]
-        UI_TEST["Interface Web<br/>(Botão 1.000.000 req)"]
-        CLI_TEST["Benchmark CLI<br/>(Node.js / Python async worker)"]
-    end
-
-    subgraph LB["Nginx (Load Balancer - Porta 3000)"]
-        UPSTREAM{"Upstream Cluster Pool<br/>Round-Robin"}
-    end
-
-    subgraph BACKENDS["Réplicas do Cluster Fastify"]
-        REP1["Réplica 1<br/>Porta 3001<br/>Header: X-Served-By: 172.28.0.x<br/><b>333.334 req (~33,3%)</b>"]
-        REP2["Réplica 2<br/>Porta 3001<br/>Header: X-Served-By: 172.28.0.y<br/><b>333.333 req (~33,3%)</b>"]
-        REP3["Réplica 3<br/>Porta 3001<br/>Header: X-Served-By: 172.28.0.z<br/><b>333.333 req (~33,3%)</b>"]
-    end
-
-    subgraph SYNC["Sincronização de Estado Compartilhado"]
-        STATE_TABLE[("Tabela MySQL:<br/>cluster_benchmark<br/>(Progresso, Métricas e Contadores)")]
-    end
-
-    UI_TEST -->|"POST /api/cluster/benchmark/start"| LB
-    CLI_TEST -->|"Requisições HTTP simultâneas"| LB
-
-    LB --> UPSTREAM
-    UPSTREAM -->|"Req 1, 4, 7... 3N+1"| REP1
-    UPSTREAM -->|"Req 2, 5, 8... 3N+2"| REP2
-    UPSTREAM -->|"Req 3, 6, 9... 3N+3"| REP3
-
-    REP1 -->|"Atualiza contadores"| STATE_TABLE
-    REP2 -->|"Atualiza contadores"| STATE_TABLE
-    REP3 -->|"Atualiza contadores"| STATE_TABLE
-
-    UI_TEST -.->|"GET /api/cluster/benchmark/status (Polling)"| LB
-    LB -.->|"Qualquer réplica lê o estado unificado"| STATE_TABLE
-```
-
----
-
-## 4. Ciclo de Vida e Máquina de Estados da Coleira IoT
-
-Cada dispositivo rastreador transita entre diferentes estados conforme as condições de conectividade, bateria e limites geográficos:
-
-```mermaid
-stateDiagram-v2
-    [*] --> Desconectado: Dispositivo desligado
-
-    Desconectado --> Conectando: Ativação / Boot da Coleira
-    Conectando --> Online_Normal: Conexão MQTT estabelecida & Bateria > 20%
-    Conectando --> Desconectado: Timeout de conexão (3 tentativas)
-
-    state Online_Normal {
-        [*] --> RastreamentoPadrao
-        RastreamentoPadrao --> TransmissaoPeriodica: Intervalo atingido (a cada 5s)
-        TransmissaoPeriodica --> RastreamentoPadrao: ACK recebido
-    }
-
-    Online_Normal --> Bateria_Baixa: Nível de Bateria <= 20%
-    Online_Normal --> Alerta_Cerca_Violada: Coordenada fora do polígono seguro
-    Online_Normal --> Alerta_Saude: Frequência cardíaca crítica
-
-    state Bateria_Baixa {
-        [*] --> ModoEconomia
-        ModoEconomia --> TransmissaoReduzida: Intervalo espaçado (a cada 30s)
-        TransmissaoReduzida --> ModoEconomia
-    }
-
-    Alerta_Cerca_Violada --> Online_Normal: Retorno à área autorizada
-    Alerta_Saude --> Online_Normal: Frequência normalizada
-    Bateria_Baixa --> Online_Normal: Conectado ao carregador (> 50%)
-
-    Online_Normal --> Desconectado: Perda de sinal / Bateria esgotada
-    Bateria_Baixa --> Desconectado: Bateria = 0%
-    Alerta_Cerca_Violada --> Desconectado: Perda de sinal
-```
-
----
-
-## 5. Topologia de Rede Docker e Isolamento
-
-O ambiente é orquestrado através do Docker Compose com uma rede bridge isolada (`pet-tracker-net`), garantindo comunicação por DNS interno e expondo estritamente as portas necessárias ao host:
+## 🌐 6. Mermaid: Topologia de Rede Docker e Portas
 
 ```mermaid
 flowchart TB
-    subgraph HOST["Ambiente Host (Máquina Física / Navegador)"]
-        BROWSER["Navegador Web / Cliente API"]
-        TERMINAL["Terminal do Administrador (CLI)"]
+    subgraph EXTERNAL["Acessos Externos (Host)"]
+        BROWSER["Navegador Web / Cliente: http://localhost:80"]
+        API_GATEWAY["API Gateway: http://localhost:3000"]
+        MQTT_WS["WebSocket MQTT: ws://localhost:9001"]
     end
 
-    subgraph DOCKER_NET["Rede Docker Bridge Privada: `pet-tracker-net` (Subrede 172.28.0.0/16)"]
-        subgraph FRONTEND_SVC["Serviço Web"]
-            NGINX_FRONT["pet-tracker-frontend<br/>Porta interna: 80"]
-        end
-
-        subgraph GATEWAY_SVC["Gateway & Load Balancer"]
-            NGINX_LB["pet-tracker-loadbalancer<br/>Porta interna: 3000"]
-        end
-
-        subgraph BACKEND_SVC["Cluster Escalável"]
-            B_REP1["distribuidos-backend-1:3001"]
-            B_REP2["distribuidos-backend-2:3001"]
-            B_REP3["distribuidos-backend-3:3001"]
-        end
-
-        subgraph IOT_SVC["Camada IoT"]
-            MOSQ["pet-tracker-mosquitto:1883 / 9001"]
-            INTER["pet-tracker-interscity:8000"]
-            SIMS["pet-tracker-simulators (Processo em background)"]
-        end
-
-        subgraph DATA_SVC["Persistência"]
-            DB_NODE["pet-tracker-mysql:3306<br/>(Volume persistente montado)"]
-        end
+    subgraph DOCKER_NET["Rede Docker Privada: pet-tracker-net (172.28.0.0/16)"]
+        FRONT["pet-tracker-frontend:80"]
+        LB["pet-tracker-loadbalancer:3000"]
+        REP1["distribuidos-backend-1:3001"]
+        REP2["distribuidos-backend-2:3001"]
+        REP3["distribuidos-backend-3:3001"]
+        DB["pet-tracker-mysql:3306"]
+        MOSQ["pet-tracker-mosquitto:1883 / 9001"]
+        SIM["pet-tracker-simulators"]
     end
 
-    %% Mapeamentos de porta Host -> Docker
-    BROWSER -->|"http://localhost:80"| NGINX_FRONT
-    BROWSER -->|"http://localhost:3000"| NGINX_LB
-    TERMINAL -->|"./start.sh status / benchmark"| NGINX_LB
-    BROWSER -.->|"ws://localhost:9001"| MOSQ
+    BROWSER --> FRONT
+    API_GATEWAY --> LB
+    MQTT_WS --> MOSQ
 
-    %% Comunicação interna
-    NGINX_FRONT -->|"Proxy /api"| NGINX_LB
-    NGINX_LB -->|"HTTP Round-Robin"| B_REP1
-    NGINX_LB -->|"HTTP Round-Robin"| B_REP2
-    NGINX_LB -->|"HTTP Round-Robin"| B_REP3
-
-    B_REP1 -->|"TCP MySQL 3306"| DB_NODE
-    B_REP2 -->|"TCP MySQL 3306"| DB_NODE
-    B_REP3 -->|"TCP MySQL 3306"| DB_NODE
-
-    SIMS -->|"Publica telemetria"| MOSQ
-    SIMS -->|"Envia dados sensores"| INTER
-    INTER --> MOSQ
-    B_REP1 <-->|"MQTT Client"| MOSQ
-    B_REP2 <-->|"MQTT Client"| MOSQ
-    B_REP3 <-->|"MQTT Client"| MOSQ
+    FRONT --> LB
+    LB --> REP1 & REP2 & REP3
+    REP1 & REP2 & REP3 --> DB
+    REP1 & REP2 & REP3 <--> MOSQ
+    SIM --> MOSQ
 ```
 
 ---
 
-## 🔬 Conceitos de Sistemas Distribuídos Aplicados
+## 📚 Como Renderizar os Diagramas PlantUML
 
-| Conceito | Implementação Prática no Projeto |
-| :--- | :--- |
-| **Escalabilidade Horizontal** | O backend possui 3 instâncias equivalentes (`--scale backend=3`) que podem ser aumentadas dinamicamente sem interrupção de serviço. |
-| **Balanceamento de Carga** | O Nginx distribui as requisições via algoritmo **Round-Robin**, inserindo nos cabeçalhos HTTP o metadado `X-Served-By` com o IP e porta da réplica que processou o payload. |
-| **Desacoplamento Temporal e Espacial** | A comunicação entre coleiras IoT e o backend é assíncrona, mediada pelo Broker MQTT (Eclipse Mosquitto) no padrão Publish/Subscribe. |
-| **Consistência Compartilhada** | O estado do teste de estresse de 1 milhão de requisições é unificado em uma tabela do MySQL (`cluster_benchmark`), garantindo que qualquer réplica consultada responda com o mesmo progresso em tempo real. |
-| **Tolerância a Falhas** | Se uma réplica do backend for interrompida (`docker stop distribuidos-backend-2`), o Nginx redireciona as requisições para as réplicas remanescentes sem indisponibilidade para o usuário. |
+Os diagramas acima utilizam a sintaxe oficial **PlantUML Activity Diagram (Beta)**. Para visualizá-los:
+1. **Online:** Cole o código entre `@startuml` e `@enduml` no editor oficial: [PlantText Editor](https://www.planttext.com/) ou [PlantUML Server](http://www.plantuml.com/plantuml/uml/).
+2. **VS Code / Antigravity:** Instale a extensão `PlantUML` (`jebbs.plantuml`) e pressione `Alt + D` com o cursor dentro do bloco.
+3. **CLI:** Execute `plantuml FLUXOGRAMA.md` para exportar diretamente para PNG ou SVG.
