@@ -1,150 +1,191 @@
 #!/usr/bin/env python3
 """
-Orquestrador de Simuladores de Dispositivos (Sticks e Trackers)
+Orquestrador de Simuladores IoT para Teste de Carga (500 Pets Virtuais)
 Disciplina: Sistemas Distribuídos - UFMA
+Projeto: Pawsition
+
+Instancia 500 trackers virtuais (TRK_VIRTUAL_001 a 500) e envia telemetria
+concorrente via HTTP POST para o Data Collector da plataforma InterSCity.
 """
 
 import argparse
+import json
 import logging
 import os
 import signal
 import sys
 import threading
 import time
-from typing import List
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+from typing import List, Dict
 
-# Permite imports relativos a partir da raiz do simulador
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Permite imports relativos a partir da raiz do projeto
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(BASE_DIR)
+sys.path.insert(0, PROJECT_ROOT)
+
+import requests
+from requests.adapters import HTTPAdapter
 
 from simulators.tracker.tracker_sim import TrackerSimulator
-from simulators.stick.stick_sim import StickSimulator
 from simulators.common.geo import UFMA_CAMPUS_LAT, UFMA_CAMPUS_LON
 
 # Configuração de Logs
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    format="%(asctime)s [%(levelname)s] [SimOrchestrator] %(message)s",
     datefmt="%H:%M:%S"
 )
 logger = logging.getLogger("SimOrchestrator")
 
+RESOURCES_FILE = os.path.join(BASE_DIR, "interscity_resources.json")
+
+def load_or_generate_uuids(count: int) -> Dict[str, str]:
+    """
+    Carrega o mapeamento de UUIDs gerado pelo script seed_interscity.
+    Caso o arquivo não exista, gera identificadores determinísticos (UUID v5).
+    """
+    mapping: Dict[str, str] = {}
+    if os.path.exists(RESOURCES_FILE):
+        try:
+            with open(RESOURCES_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                mapping = data.get("uuid_by_tracker", {})
+                logger.info(f"Carregados {len(mapping)} UUIDs de {RESOURCES_FILE}")
+        except Exception as e:
+            logger.warning(f"Não foi possível ler {RESOURCES_FILE}: {e}")
+
+    # Garante que todos os trackers de 1 a count possuam UUID
+    namespace = uuid.NAMESPACE_DNS
+    for i in range(1, count + 1):
+        ref = f"TRK_VIRTUAL_{i:03d}"
+        if ref not in mapping:
+            mapping[ref] = str(uuid.uuid5(namespace, f"pawsition.{ref}"))
+
+    return mapping
+
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Simulador Distribuído de Dispositivos IoT para Rastreamento de Pets (UFMA)"
+        description="Teste de Carga IoT: 500 Pets Virtuais no InterSCity (UFMA - Pawsition)"
     )
     parser.add_argument(
-        "--host",
-        default=os.getenv("MQTT_HOST", "localhost"),
-        help="Endereço do broker MQTT (padrão: localhost)"
+        "--interscity",
+        default=os.getenv("INTERSCITY_URL", "http://interscity:8000"),
+        help="URL base do middleware InterSCity (padrão: http://interscity:8000)"
     )
     parser.add_argument(
-        "--port",
+        "--count",
         type=int,
-        default=int(os.getenv("MQTT_PORT", 1883)),
-        help="Porta do broker MQTT (padrão: 1883)"
-    )
-    parser.add_argument(
-        "--trackers",
-        default="TRK_DOG_01,TRK_DOG_02,TRK_CAT_03",
-        help="Lista de referências de Trackers separadas por vírgula"
-    )
-    parser.add_argument(
-        "--sticks",
-        default="STICK_CCET_UFMA,STICK_BIBLIOTECA",
-        help="Lista de referências de Sticks separadas por vírgula"
+        default=500,
+        help="Quantidade de pets virtuais a serem simulados (padrão: 500)"
     )
     parser.add_argument(
         "--interval",
         type=float,
         default=3.0,
-        help="Intervalo de envio de telemetria dos trackers em segundos (padrão: 3.0)"
+        help="Intervalo de telemetria de cada tracker em segundos (padrão: 3.0s)"
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=30,
+        help="Número de threads no pool HTTP (padrão: 30)"
     )
     return parser.parse_args()
 
 def main():
     args = parse_args()
+    total_pets = args.count
+    interscity_url = args.interscity.rstrip("/")
 
-    print("\n" + "=" * 65)
-    print("🐾 SIMULADOR DISTRIBUÍDO DE DISPOSITIVOS - PET TRACKER (UFMA) 🐾")
-    print(f"📡 Broker MQTT : {args.host}:{args.port}")
-    print(f"⏱️  Intervalo   : {args.interval}s")
-    print("=" * 65 + "\n")
+    print("\n" + "=" * 70)
+    print("🐾 PAWSITION - TESTE DE CARGA IoT (SISTEMAS DISTRIBUÍDOS - UFMA) 🐾")
+    print(f"🎯 Total de Pets Virtuais : {total_pets} coleiras (TRK_VIRTUAL_001 a {total_pets:03d})")
+    print(f"🌐 Middleware InterSCity  : {interscity_url}")
+    print(f"⏱️  Intervalo de Envio     : {args.interval}s por dispositivo")
+    print(f"🧵 Pool de Threads HTTP   : {args.workers} workers concorrentes")
+    print("=" * 70 + "\n")
 
-    tracker_refs = [t.strip() for t in args.trackers.split(",") if t.strip()]
-    stick_refs = [s.strip() for s in args.sticks.split(",") if s.strip()]
+    # 1. Carrega mapeamento de UUIDs
+    uuid_map = load_or_generate_uuids(total_pets)
 
-    simulators = []
-    threads = []
-    stop_event = threading.Event()
+    # 2. Instancia os 500 simuladores de trackers em loop
+    simulators: List[TrackerSimulator] = []
+    for i in range(1, total_pets + 1):
+        ref = f"TRK_VIRTUAL_{i:03d}"
+        res_uuid = uuid_map[ref]
 
-    # 1. Instancia Sticks (Gateways)
-    primary_stick = stick_refs[0] if stick_refs else "STICK_DEFAULT"
-    for s_ref in stick_refs:
-        stick_sim = StickSimulator(
-            stick_ref=s_ref,
-            broker_host=args.host,
-            broker_port=args.port,
-            interval_seconds=10.0
-        )
-        simulators.append(stick_sim)
+        # Distribuição geográfica gradual no mapa para visualização rica
+        lat_offset = ((i % 25) - 12) * 0.00035
+        lon_offset = ((i // 25) - 10) * 0.00030
 
-    # 2. Instancia Trackers (Coleiras de Pets)
-    for i, t_ref in enumerate(tracker_refs):
-        # Pequeno deslocamento inicial no mapa para espalhar os pets pelo campus
-        lat_offset = (i - 1) * 0.0006
-        lon_offset = (i - 1) * 0.0004
-
-        tracker_sim = TrackerSimulator(
-            tracker_ref=t_ref,
-            broker_host=args.host,
-            broker_port=args.port,
-            stick_ref=primary_stick,
+        sim = TrackerSimulator(
+            tracker_ref=ref,
+            resource_uuid=res_uuid,
+            interscity_url=interscity_url,
+            stick_ref="STICK_CCET_UFMA",
             center_lat=UFMA_CAMPUS_LAT + lat_offset,
             center_lon=UFMA_CAMPUS_LON + lon_offset,
             interval_seconds=args.interval
         )
-        simulators.append(tracker_sim)
-
-    # Inicia todos os dispositivos
-    logger.info(f"Iniciando {len(stick_refs)} Sticks e {len(tracker_refs)} Trackers...")
-
-    for sim in simulators:
         sim.start()
+        simulators.append(sim)
 
-    # Loop de ticks por dispositivo em threads dedicadas ou loop cooperativo
-    def worker_loop(sim):
-        # Pequeno atraso escalonado para evitar pico instantâneo de pacotes
-        time.sleep(simulators.index(sim) * 0.4)
-        while not stop_event.is_set():
-            try:
-                sim.tick()
-            except Exception as e:
-                logger.error(f"Erro no dispositivo {getattr(sim, 'tracker_ref', getattr(sim, 'stick_ref', 'dev'))}: {e}")
-            stop_event.wait(timeout=sim.interval_seconds)
+    logger.info(f"{len(simulators)} rastreadores virtuais prontos para envio de telemetria.")
 
-    for sim in simulators:
-        t = threading.Thread(target=worker_loop, args=(sim,), daemon=True)
-        threads.append(t)
-        t.start()
+    # 3. Configuração de sessão HTTP com connection pooling de alta performance
+    session = requests.Session()
+    adapter = HTTPAdapter(
+        pool_connections=args.workers,
+        pool_maxsize=args.workers * 2,
+        max_retries=1
+    )
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
 
-    logger.info("Todos os dispositivos simulados estão operando e transmitindo via MQTT!")
-    logger.info("Pressione Ctrl+C para encerrar os simuladores.\n")
+    stop_event = threading.Event()
 
-    # Tratamento de finalização graciosa
     def handle_exit(signum, frame):
-        logger.info("\nEncerrando simuladores graciosamente...")
+        logger.info("\nEncerrando teste de carga...")
         stop_event.set()
-        for sim in simulators:
-            sim.stop()
-        logger.info("Todos os simuladores foram desconectados do broker MQTT.")
-        sys.exit(0)
 
     signal.signal(signal.SIGINT, handle_exit)
     signal.signal(signal.SIGTERM, handle_exit)
 
-    # Mantém a thread principal ativa
-    while not stop_event.is_set():
-        time.sleep(1)
+    # 4. Loop de carga distribuído: executa os ciclos de telemetria
+    executor = ThreadPoolExecutor(max_workers=args.workers)
+    cycle_count = 0
+
+    try:
+        while not stop_event.is_set():
+            cycle_start = time.time()
+            cycle_count += 1
+
+            # Dispara os 500 ticks concorrentemente no thread pool
+            futures = [
+                executor.submit(sim.tick, session)
+                for sim in simulators
+            ]
+
+            success_count = sum(1 for f in futures if f.result())
+            elapsed = time.time() - cycle_start
+            rate = round(total_pets / max(elapsed, 0.001), 1)
+
+            logger.info(
+                f"[Ciclo #{cycle_count:03d}] {success_count}/{total_pets} telemetrias enviadas "
+                f"em {elapsed:.2f}s (~{rate} req/s para InterSCity Data Collector)"
+            )
+
+            # Aguarda o intervalo restante respeitando o tempo de envio
+            sleep_time = max(0.0, args.interval - elapsed)
+            if stop_event.wait(timeout=sleep_time):
+                break
+
+    finally:
+        executor.shutdown(wait=False)
+        session.close()
+        logger.info("Teste de carga finalizado.")
 
 if __name__ == "__main__":
     main()
