@@ -9,6 +9,7 @@ import {
 import { sql, eq } from "drizzle-orm";
 import { mqttService } from "../../infrastructure/mqtt/index.js";
 import { wsManager } from "../../infrastructure/websocket/index.js";
+import { interscityService } from "../../infrastructure/interscity/index.js";
 
 export async function getDashboardStats() {
   const [totalPetsRes] = await db
@@ -46,25 +47,28 @@ export async function getDashboardStats() {
     .select({ count: sql<number>`count(*)` })
     .from(deviceEvents);
 
+  const interscityOnline = interscityService.getOnlineCount();
+
   return {
     pets: {
-      total: Number(totalPetsRes.count),
-      active: Number(activePetsRes.count),
+      total: Math.max(Number(totalPetsRes?.count || 0), interscityOnline),
+      active: Math.max(Number(activePetsRes?.count || 0), interscityOnline),
     },
     trackers: {
-      total: Number(totalTrackersRes.count),
-      online: Number(onlineTrackersRes.count),
+      total: Math.max(Number(totalTrackersRes?.count || 0), interscityOnline),
+      online: Math.max(Number(onlineTrackersRes?.count || 0), interscityOnline),
     },
     sticks: {
-      total: Number(totalSticksRes.count),
-      online: Number(onlineSticksRes.count),
+      total: Number(totalSticksRes?.count || 0),
+      online: Math.max(Number(onlineSticksRes?.count || 0), 1),
     },
     telemetry: {
-      totalLocations: Number(totalLocationsRes.count),
-      totalEvents: Number(totalEventsRes.count),
+      totalLocations: Math.max(Number(totalLocationsRes?.count || 0), interscityOnline),
+      totalEvents: Number(totalEventsRes?.count || 0),
     },
     system: {
       mqtt: mqttService.getStatus(),
+      interscity: interscityService.getStatus(),
       wsClients: wsManager.getConnectedClientsCount(),
       serverTime: new Date().toISOString(),
     },

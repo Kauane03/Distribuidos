@@ -14,11 +14,14 @@ import {
   voltageToPercent,
 } from "../../infrastructure/mqtt/helpers.js";
 import { wsManager } from "../../infrastructure/websocket/index.js";
+import { interscityService } from "../../infrastructure/interscity/index.js";
 
 export async function getLatestLocations() {
   const allPets = await db.select().from(pets).where(eq(pets.status, true));
 
-  const results = [];
+  const results: any[] = [];
+  const seenPetIds = new Set<number>();
+
   for (const pet of allPets) {
     const activeLink = await db.query.petTrackers.findFirst({
       where: and(eq(petTrackers.petId, pet.id), isNull(petTrackers.dataFim)),
@@ -35,6 +38,7 @@ export async function getLatestLocations() {
 
     if (lastRastreio) {
       results.push({
+        id: pet.id,
         petId: pet.id,
         petNome: pet.nome,
         petFoto: pet.pathFoto,
@@ -51,6 +55,16 @@ export async function getLatestLocations() {
         bateriaStick: lastRastreio.bateriaStick ? Number(lastRastreio.bateriaStick) : null,
         capturedAt: lastRastreio.capturedAt.toISOString(),
       });
+      seenPetIds.add(pet.id);
+    }
+  }
+
+  // Mescla com as localizações em tempo real dos 500 pets fornecidas pelo InterSCity
+  const interscityLocations = interscityService.getLatestLocations();
+  for (const loc of interscityLocations) {
+    if (!seenPetIds.has(loc.petId)) {
+      results.push(loc);
+      seenPetIds.add(loc.petId);
     }
   }
 

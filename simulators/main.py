@@ -30,6 +30,7 @@ from requests.adapters import HTTPAdapter
 
 from simulators.tracker.tracker_sim import TrackerSimulator
 from simulators.common.geo import UFMA_CAMPUS_LAT, UFMA_CAMPUS_LON
+from simulators.seed_interscity import seed_resources
 
 # Configuração de Logs
 logging.basicConfig(
@@ -44,9 +45,16 @@ RESOURCES_FILE = os.path.join(BASE_DIR, "interscity_resources.json")
 def load_or_generate_uuids(count: int) -> Dict[str, str]:
     """
     Carrega o mapeamento de UUIDs gerado pelo script seed_interscity.
-    Caso o arquivo não exista, gera identificadores determinísticos (UUID v5).
+    Caso o arquivo não exista, executa o seed automaticamente.
     """
     mapping: Dict[str, str] = {}
+    if not os.path.exists(RESOURCES_FILE):
+        logger.info(f"Arquivo {RESOURCES_FILE} não encontrado. Executando seed automático de {count} recursos...")
+        try:
+            seed_resources(count)
+        except Exception as err:
+            logger.warning(f"Seed automático encontrou aviso: {err}")
+
     if os.path.exists(RESOURCES_FILE):
         try:
             with open(RESOURCES_FILE, "r", encoding="utf-8") as f:
@@ -92,6 +100,11 @@ def parse_args():
         default=30,
         help="Número de threads no pool HTTP (padrão: 30)"
     )
+    # Argumentos legados aceitos para retrocompatibilidade
+    parser.add_argument("--host", default="mosquitto", help=argparse.SUPPRESS)
+    parser.add_argument("--port", type=int, default=1883, help=argparse.SUPPRESS)
+    parser.add_argument("--trackers", default="", help=argparse.SUPPRESS)
+    parser.add_argument("--sticks", default="", help=argparse.SUPPRESS)
     return parser.parse_args()
 
 def main():

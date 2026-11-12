@@ -3,11 +3,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { wsManager } from "../websocket/index.js";
 import { voltageToPercent, getSignalQuality } from "../mqtt/helpers.js";
+import { db } from "../database/index.js";
+import { pets, trackers, petTrackers } from "../database/schema.js";
+import { eq, inArray } from "drizzle-orm";
+import { seedVirtualPets } from "../database/seed.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Tipagem estrita da estrutura de dados do InterSCity
 export interface InterSCityResourceMeta {
   tracker_ref: string;
   uuid: string;
@@ -32,8 +35,14 @@ export interface InterSCityTelemetryData {
 }
 
 export interface LocationBroadcastPayload {
-  trackerRef: string;
+  id: number;
+  petId: number;
   petNome: string;
+  petFoto?: string | null;
+  raca?: string | null;
+  trackerId: number;
+  trackerRef: string;
+  stickId: number | null;
   stickRef: string | null;
   lat: number;
   lng: number;
@@ -45,20 +54,29 @@ export interface LocationBroadcastPayload {
   isMoving: boolean;
 }
 
+interface PetTrackerRelationCache {
+  petId: number;
+  trackerId: number;
+  petNome: string;
+  petFoto: string | null;
+  raca: string | null;
+}
+
 class InterSCityService {
   private baseUrl: string;
   private resources: InterSCityResourceMeta[] = [];
   private pollingTimer: NodeJS.Timeout | null = null;
   private isPolling = false;
   private lastSeenTimestamps: Map<string, number> = new Map();
+  private petTrackerCache: Map<string, PetTrackerRelationCache> = new Map();
+  private cacheLatestLocations: Map<string, LocationBroadcastPayload> = new Map();
 
   constructor() {
     this.baseUrl = (process.env.INTERSCITY_URL || "http://interscity:8000").replace(/\/+$/, "");
   }
 
   /**
-   * Inicializa o serviço carregando a lista de recursos cadastrados
-   * a partir do catálogo local gerado pelo seed ou do próprio InterSCity.
+   * Inicializa o serviço carregando recursos e sincronizando banco relacional
    */
   public async initialize(): Promise<void> {
     this.loadLocalResources();
@@ -67,14 +85,74 @@ class InterSCityService {
       await this.fetchResourcesFromCatalog();
     }
 
+    // Sincroniza os 500 pets virtuais na base de dados relacional (MySQL)
+    await this.ensureDatabaseSync();
+
     console.log(
-      `[InterSCity] Serviço inicializado com ${this.resources.length} recursos mapeados (URL: ${this.baseUrl})`
+      `[InterSCity] Serviço pronto com ${this.resources.length} recursos mapeados (${this.petTrackerCache.size} pets vinculados)`
     );
   }
 
   /**
-   * Carrega mapeamento gerado previamente pelo script seed_interscity
+   * Garante que os 500 pets virtuais estejam cadastrados e carregados no cache
    */
+  private async ensureDatabaseSync(): Promise<void> {
+    try {
+      // 1. Invoca o seeder para garantir que os 500 pets virtuais existam no MySQL
+      await seedVirtualPets(500);
+
+      // 2. Constrói o cache de vínculos entre trackers e pets
+      const allTrackers = await db.select().from(trackers);
+      const allPets = await db.select().from(pets);
+      const allLinks = await db.select().from(petTrackers);
+
+      const petsMap = new Map(allPets.map((p) => [p.id, p]));
+      const linksByTrackerId = new Map(allLinks.map((l) => [l.trackerId, l.petId]));
+
+      for (const trk of allTrackers) {
+        const petId = linksByTrackerId.get(trk.id);
+        const pet = petId ? petsMap.get(petId) : null;
+
+        if (pet) {
+          this.petTrackerCache.set(trk.trackerRef, {
+            petId: pet.id,
+            trackerId: trk.id,
+            petNome: pet.nome,
+            petFoto: pet.pathFoto,
+            raca: pet.raca,
+          });
+
+          // Inicializa localização no cache com coordenadas do recurso
+          const meta = this.resources.find((r) => r.tracker_ref === trk.trackerRef);
+          const initialLat = meta?.lat ?? -2.5578;
+          const initialLon = meta?.lon ?? -44.3113;
+
+          this.cacheLatestLocations.set(trk.trackerRef, {
+            id: pet.id,
+            petId: pet.id,
+            petNome: pet.nome,
+            petFoto: pet.pathFoto,
+            raca: pet.raca,
+            trackerId: trk.id,
+            trackerRef: trk.trackerRef,
+            stickId: 1,
+            stickRef: "STICK_CCET_UFMA",
+            lat: initialLat,
+            lng: initialLon,
+            rssi: 78,
+            qualidadeSinal: "Excelente",
+            bateriaTracker: Number(trk.bateria) || 85,
+            bateriaStick: 98,
+            capturedAt: new Date().toISOString(),
+            isMoving: true,
+          });
+        }
+      }
+    } catch (err: any) {
+      console.warn("[InterSCity] Aviso na sincronização do banco relacional:", err.message);
+    }
+  }
+
   private loadLocalResources(): void {
     const candidates = [
       path.resolve(__dirname, "../../../data/interscity_resources.json"),
@@ -98,9 +176,6 @@ class InterSCityService {
     }
   }
 
-  /**
-   * Consulta a API do Resource Catalog do InterSCity caso não haja arquivo local
-   */
   private async fetchResourcesFromCatalog(): Promise<void> {
     try {
       const response = await fetch(`${this.baseUrl}/catalog/resources`, {
@@ -122,65 +197,44 @@ class InterSCityService {
         }));
       }
     } catch {
-      // Falha silenciosa caso o catálogo ainda não esteja disponível
+      // Ignora falha se o catálogo ainda estiver iniciando
     }
   }
 
-  /**
-   * Inicia o ciclo contínuo de polling com broadcast via WebSocket
-   */
   public startPolling(intervalMs = 2500): void {
     if (this.pollingTimer) return;
 
     this.isPolling = true;
-    console.log(`[InterSCity] Iniciando rotina otimizada de pooling a cada ${intervalMs}ms...`);
+    console.log(`[InterSCity] Polling de 500 pets ativo a cada ${intervalMs}ms`);
 
-    // Executa a primeira verificação imediatamente
     this.syncLatestData().catch((err) => {
-      console.warn("[InterSCity] Erro no ciclo inicial de sincronização:", err.message);
+      console.warn("[InterSCity] Aviso no primeiro ciclo de sync:", err.message);
     });
 
     this.pollingTimer = setInterval(() => {
       this.syncLatestData().catch((err) => {
-        console.warn("[InterSCity] Erro no ciclo de polling:", err.message);
+        console.warn("[InterSCity] Aviso no polling de telemetria:", err.message);
       });
     }, intervalMs);
   }
 
-  /**
-   * Para a rotina de polling
-   */
   public stopPolling(): void {
     if (this.pollingTimer) {
       clearInterval(this.pollingTimer);
       this.pollingTimer = null;
       this.isPolling = false;
-      console.log("[InterSCity] Rotina de polling encerrada.");
     }
   }
 
-  /**
-   * Consulta a telemetria mais recente no InterSCity e faz push via WebSocket.
-   * Aplica estratégia híbrida: tenta o endpoint de lote (batch) para alta performance;
-   * se indisponível, faz consultas concorrentes com chunks controlados.
-   */
   public async syncLatestData(): Promise<void> {
-    // Se não houver clientes WebSocket ouvindo, reduz processamento
-    if (wsManager.getConnectedClientsCount() === 0 && this.resources.length > 50) {
-      return;
-    }
-
-    // 1. Tenta o endpoint agregador em lote (1 única requisição HTTP para todos os recursos)
+    // 1. Tenta o endpoint agregador em lote
     const batchHandled = await this.tryBatchCollectionSync();
     if (batchHandled) return;
 
-    // 2. Fallback: Consulta individual em chunks concorrentes
+    // 2. Fallback: Consulta individual em chunks
     await this.syncIndividualResourcesInChunks(25);
   }
 
-  /**
-   * Tenta sincronizar via GET /collector/resources/data/last (lote)
-   */
   private async tryBatchCollectionSync(): Promise<boolean> {
     try {
       const resp = await fetch(`${this.baseUrl}/collector/resources/data/last`, {
@@ -206,9 +260,6 @@ class InterSCityService {
     }
   }
 
-  /**
-   * Consulta o endpoint individual GET /collector/resources/{uuid}/data/last em chunks
-   */
   private async syncIndividualResourcesInChunks(chunkSize = 25): Promise<void> {
     const list = this.resources.slice(0, 500);
 
@@ -222,16 +273,13 @@ class InterSCityService {
               this.processTelemetryItem(resource.uuid, data, resource);
             }
           } catch {
-            // Ignora falhas isoladas de rede
+            // Ignora falhas isoladas
           }
         })
       );
     }
   }
 
-  /**
-   * Consulta o último dado de um recurso específico
-   */
   public async fetchResourceLastData(uuid: string): Promise<InterSCityTelemetryData | null> {
     try {
       const url = `${this.baseUrl}/collector/resources/${uuid}/data/last`;
@@ -246,7 +294,7 @@ class InterSCityService {
   }
 
   /**
-   * Processa o dado de telemetria recebido e faz o broadcast se for atualizado
+   * Processa a telemetria, atualiza o cache e faz broadcast via WebSocket
    */
   private processTelemetryItem(
     uuid: string,
@@ -263,21 +311,34 @@ class InterSCityService {
     const timestamp = Number(rawTelemetry.timestamp) || Date.now();
     const lastSeen = this.lastSeenTimestamps.get(uuid) || 0;
 
-    // Descarta mensagens já enviadas anteriormente para economizar rede/processamento
     if (timestamp <= lastSeen) {
       return;
     }
     this.lastSeenTimestamps.set(uuid, timestamp);
 
     const trackerRef = rawTelemetry.t_id || cachedMeta?.tracker_ref || `TRK_${uuid.substring(0, 8)}`;
-    const petNome = cachedMeta?.pet_name || `Pet (${trackerRef})`;
-    const batPercent = voltageToPercent(rawTelemetry.battery ?? rawTelemetry.bat);
-    const rssi = rawTelemetry.rssi ?? rawTelemetry.lr_rssi ?? null;
+    const relation = this.petTrackerCache.get(trackerRef);
+
+    // Identificadores consistentes para o frontend
+    const petId = relation?.petId ?? (parseInt(trackerRef.replace(/\D/g, ""), 10) || 1);
+    const trackerId = relation?.trackerId ?? petId;
+    const petNome = relation?.petNome || cachedMeta?.pet_name || `Pet Virtual #${petId}`;
+    const petFoto = relation?.petFoto || null;
+    const raca = relation?.raca || "Pet Virtual";
+
+    const batPercent = voltageToPercent(rawTelemetry.battery ?? rawTelemetry.bat) ?? 85;
+    const rssi = rawTelemetry.rssi ?? rawTelemetry.lr_rssi ?? 75;
     const signalQuality = getSignalQuality(rssi);
 
     const payload: LocationBroadcastPayload = {
-      trackerRef,
+      id: petId,
+      petId,
       petNome,
+      petFoto,
+      raca,
+      trackerId,
+      trackerRef,
+      stickId: 1,
       stickRef: rawTelemetry.s_id || "STICK_CCET_UFMA",
       lat,
       lng: lon,
@@ -289,26 +350,53 @@ class InterSCityService {
       isMoving: (rawTelemetry.speed ?? 1) > 0.1,
     };
 
-    // Disparo em tempo real para os clientes conectados no React via WebSocket
+    // Atualiza cache de localização mais recente
+    this.cacheLatestLocations.set(trackerRef, payload);
+
+    // 1. Broadcast de LOCALIZAÇÃO para o mapa do React Leaflet
     wsManager.broadcast("LOCATION_UPDATE", payload);
 
-    // Alerta de bateria crítica caso esteja abaixo de 15%
-    if (batPercent !== null && batPercent < 15) {
+    // 2. Broadcast de STATUS ONLINE para Navbar e Sidebar do React
+    wsManager.broadcast("DEVICE_STATUS", {
+      deviceType: "tracker",
+      deviceRef: trackerRef,
+      isOnline: true,
+      bateria: batPercent,
+      lastSeen: new Date(timestamp).toISOString(),
+    });
+
+    // 3. Alerta de bateria crítica se necessário
+    if (batPercent < 15) {
       wsManager.broadcast("ALERT", {
         type: "LOW_BATTERY",
         severity: "warning",
         title: "Bateria Fraca",
-        message: `O tracker ${trackerRef} do ${petNome} está com ${batPercent}% de bateria.`,
+        message: `O tracker ${trackerRef} (${petNome}) está com bateria crítica: ${batPercent}%`,
         deviceRef: trackerRef,
         timestamp: new Date().toISOString(),
       });
     }
   }
 
+  /**
+   * Retorna todas as localizações em tempo real dos pets (500 pets)
+   */
+  public getLatestLocations(): LocationBroadcastPayload[] {
+    return Array.from(this.cacheLatestLocations.values());
+  }
+
+  /**
+   * Quantidade de trackers atualmente online no sistema
+   */
+  public getOnlineCount(): number {
+    return Math.max(this.lastSeenTimestamps.size, this.cacheLatestLocations.size, this.resources.length);
+  }
+
   public getStatus() {
     return {
       interscity_url: this.baseUrl,
       resources_mapped: this.resources.length,
+      online_trackers: this.getOnlineCount(),
       is_polling: this.isPolling,
     };
   }
@@ -319,4 +407,3 @@ class InterSCityService {
 }
 
 export const interscityService = new InterSCityService();
-

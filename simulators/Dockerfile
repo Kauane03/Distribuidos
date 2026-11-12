@@ -11,4 +11,4 @@ ENV PYTHONUNBUFFERED=1
 ENV MQTT_HOST=mosquitto
 ENV MQTT_PORT=1883
 
-CMD ["python", "simulators/main.py", "--host", "mosquitto", "--port", "1883", "--interval", "3"]
+CMD ["python", "simulators/main.py", "--interscity", "http://interscity:8000", "--count", "500", "--interval", "3"]
