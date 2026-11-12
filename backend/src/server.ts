@@ -60,6 +60,7 @@ async function bootstrap() {
         interscity: interscityService.getStatus(),
         cluster: {
           node_pid: process.pid,
+          hostname: process.env.HOSTNAME || "backend-node",
           uptime: process.uptime(),
         },
         timestamp: new Date().toISOString(),
