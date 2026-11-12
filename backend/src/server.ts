@@ -8,6 +8,7 @@ import { runMigrations } from "./infrastructure/database/migrate.js";
 import { seedDatabase } from "./infrastructure/database/seed.js";
 import { mqttService } from "./infrastructure/mqtt/index.js";
 import { wsManager } from "./infrastructure/websocket/index.js";
+import { interscityService } from "./infrastructure/interscity/index.js";
 
 // Módulos
 import { petRoutes } from "./modules/pets/pet.routes.js";
@@ -49,35 +50,43 @@ async function bootstrap() {
       });
     });
 
-    // 3. Health check
+    // 3. Health check com status do cluster e middleware
     fastify.get("/health", async () => {
       const dbOk = await testConnection();
       return {
         status: "ok",
         database: dbOk ? "connected" : "error",
         mqtt: mqttService.getStatus(),
+        interscity: interscityService.getStatus(),
+        cluster: {
+          node_pid: process.pid,
+          uptime: process.uptime(),
+        },
         timestamp: new Date().toISOString(),
       };
     });
 
+    // Rotas de observabilidade do InterSCity
+    fastify.get("/api/interscity/status", async () => interscityService.getStatus());
+    fastify.get("/api/interscity/resources", async () => ({
+      total: interscityService.getResources().length,
+      resources: interscityService.getResources(),
+    }));
+
     fastify.get("/", async () => {
       return {
-        project: "Sistema Distribuído para Monitoramento e Rastreamento de Pets",
+        project: "Pawsition - Sistema Distribuído para Rastreamento de Pets",
         course: "Sistemas Distribuídos - UFMA",
-        version: "1.0.0",
+        version: "2.0.0",
+        architecture: {
+          middleware: "InterSCity Platform (Smart Cities)",
+          loadBalancer: "Nginx (Round Robin)",
+          realtime: "WebSocket Push",
+        },
         docs: {
           apiPrefix: "/api",
           websocket: "/ws",
-          endpoints: [
-            "/api/pets",
-            "/api/trackers",
-            "/api/sticks",
-            "/api/locations/latest",
-            "/api/locations/history",
-            "/api/events",
-            "/api/dashboard/stats",
-            "/api/associations",
-          ],
+          interscity: "/api/interscity/status",
         },
       };
     });
@@ -102,15 +111,23 @@ async function bootstrap() {
       );
     }
 
-    // 6. Conexão MQTT
+    // 6. Conexão MQTT leve para controle
     mqttService.connect();
 
-    // 7. Inicialização do Servidor HTTP/WebSocket
+    // 7. Inicialização da integração com o Middleware InterSCity
+    await interscityService.initialize();
+    interscityService.startPolling(2500);
+
+    fastify.addHook("onClose", async () => {
+      interscityService.stopPolling();
+    });
+
+    // 8. Inicialização do Servidor HTTP/WebSocket
     await fastify.listen({ port, host });
     console.log(`\n======================================================`);
     console.log(`🚀 Servidor Fastify rodando em http://${host}:${port}`);
     console.log(`📡 WebSocket ativo em ws://${host}:${port}/ws`);
-    console.log(`📦 MQTT Broker conectado: ${process.env.MQTT_BROKER_URL || "mqtt://localhost:1883"}`);
+    console.log(`🌐 InterSCity Middleware conectado em ${process.env.INTERSCITY_URL || "http://interscity:8000"}`);
     console.log(`======================================================\n`);
   } catch (err) {
     fastify.log.error(err);
