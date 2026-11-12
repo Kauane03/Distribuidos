@@ -2,7 +2,7 @@
 """
 Script de Setup e Carga: Registro de 500 Recursos no InterSCity Catalog
 Disciplina: Sistemas Distribuídos - UFMA
-Projeto: Pawsition
+Projeto: Pet Tracker
 
 Registra automaticamente 500 Trackers de Pets Virtuais (TRK_VIRTUAL_001 a 500)
 no Resource Catalog do InterSCity via POST /catalog/resources e persiste o

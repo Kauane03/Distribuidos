@@ -75,7 +75,7 @@ async function bootstrap() {
 
     fastify.get("/", async () => {
       return {
-        project: "Pawsition - Sistema Distribuído para Rastreamento de Pets",
+        project: "Pet Tracker - Sistema Distribuído para Rastreamento de Pets",
         course: "Sistemas Distribuídos - UFMA",
         version: "2.0.0",
         architecture: {

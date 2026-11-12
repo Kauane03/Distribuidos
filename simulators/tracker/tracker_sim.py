@@ -1,7 +1,7 @@
 """
 Simulador de Tracker IoT para Pets com envio via InterSCity Data Collector
 Disciplina: Sistemas Distribuídos - UFMA
-Projeto: Pawsition
+Projeto: Pet Tracker
 """
 
 import os

@@ -2,7 +2,7 @@
 """
 Orquestrador de Simuladores IoT para Teste de Carga (500 Pets Virtuais)
 Disciplina: Sistemas Distribuídos - UFMA
-Projeto: Pawsition
+Projeto: Pet Tracker
 
 Instancia 500 trackers virtuais (TRK_VIRTUAL_001 a 500) e envia telemetria
 concorrente via HTTP POST para o Data Collector da plataforma InterSCity.
@@ -67,7 +67,7 @@ def load_or_generate_uuids(count: int) -> Dict[str, str]:
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Teste de Carga IoT: 500 Pets Virtuais no InterSCity (UFMA - Pawsition)"
+        description="Teste de Carga IoT: 500 Pets Virtuais no InterSCity (UFMA - Pet Tracker)"
     )
     parser.add_argument(
         "--interscity",
@@ -100,7 +100,7 @@ def main():
     interscity_url = args.interscity.rstrip("/")
 
     print("\n" + "=" * 70)
-    print("🐾 PAWSITION - TESTE DE CARGA IoT (SISTEMAS DISTRIBUÍDOS - UFMA) 🐾")
+    print("🐾 PET TRACKER - TESTE DE CARGA IoT (SISTEMAS DISTRIBUÍDOS - UFMA) 🐾")
     print(f"🎯 Total de Pets Virtuais : {total_pets} coleiras (TRK_VIRTUAL_001 a {total_pets:03d})")
     print(f"🌐 Middleware InterSCity  : {interscity_url}")
     print(f"⏱️  Intervalo de Envio     : {args.interval}s por dispositivo")

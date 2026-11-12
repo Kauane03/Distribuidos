@@ -1,4 +1,4 @@
-# 🐾 Pawsition - Sistema Distribuído para Monitoramento e Rastreamento de Pets
+# 🐾 Pet Tracker - Sistema Distribuído para Monitoramento e Rastreamento de Pets
 
 **Universidade Federal do Maranhão (UFMA)**  
 **Disciplina:** Sistemas Distribuídos  
@@ -8,7 +8,7 @@
 
 ## 1. 📌 Contexto e Objetivos
 
-O **Pawsition** é uma solução distribuída para rastreamento inteligente de pets em escala universitária/urbana.
+O **Pet Tracker** é uma solução distribuída para rastreamento inteligente de pets em escala universitária/urbana.
 
 Originalmente estruturado sobre um backend monolítico, o sistema foi refatorado e expandido para adotar padrões avançados da computação distribuída e Internet das Coisas (IoT):
 - **Middleware para Cidades Inteligentes (InterSCity):** A ingestão de telemetria massiva foi desacoplada do backend de aplicação e delegada ao **InterSCity Data Collector** (`/collector/resources/{uuid}/data`), com catálogo centralizado no **Resource Catalog** (`/catalog/resources`).
