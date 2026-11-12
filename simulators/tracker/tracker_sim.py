@@ -35,6 +35,8 @@ class TrackerSimulator:
         stick_ref: Optional[str] = "STICK_CCET_UFMA",
         center_lat: float = UFMA_CAMPUS_LAT,
         center_lon: float = UFMA_CAMPUS_LON,
+        start_lat: Optional[float] = None,
+        start_lon: Optional[float] = None,
         interval_seconds: float = 3.0,
         initial_battery_pct: float = 85.0
     ):
@@ -48,8 +50,10 @@ class TrackerSimulator:
         # Endpoint do InterSCity Data Collector para este recurso
         self.collector_url = f"{self.interscity_url}/collector/resources/{self.resource_uuid}/data"
 
-        # Geradores de dinâmica física do animal
-        self.geo = PetTrajectoryGenerator(start_lat=center_lat, start_lon=center_lon)
+        # Geradores de dinâmica física do animal espalhado por São Luís
+        initial_lat = start_lat if start_lat is not None else center_lat
+        initial_lon = start_lon if start_lon is not None else center_lon
+        self.geo = PetTrajectoryGenerator(start_lat=initial_lat, start_lon=initial_lon, radius_meters=1200.0)
         self.battery = BatterySimulator(initial_percent=initial_battery_pct)
 
     def start(self):

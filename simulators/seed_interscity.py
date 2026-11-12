@@ -30,7 +30,7 @@ except ImportError:
     import urllib.error
     requests = None
 
-from simulators.common.geo import UFMA_CAMPUS_LAT, UFMA_CAMPUS_LON
+from simulators.common.geo import UFMA_CAMPUS_LAT, UFMA_CAMPUS_LON, get_sao_luis_coordinates
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,7 +39,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("SeedInterSCity")
 
-TOTAL_TRACKERS = 500
+TOTAL_TRACKERS = int(os.getenv("TOTAL_TRACKERS", "1500"))
 INTERSCITY_URL = os.getenv("INTERSCITY_URL", "http://localhost:8000").rstrip("/")
 CATALOG_ENDPOINT = f"{INTERSCITY_URL}/catalog/resources"
 OUTPUT_FILE = os.path.join(BASE_DIR, "interscity_resources.json")
@@ -71,24 +71,22 @@ def ensure_capabilities(session=None):
 def register_single_resource(index: int, session=None) -> Dict[str, Any]:
     """
     Registra um tracker virtual individual no catálogo do InterSCity.
-    Espalha as coordenadas pelo campus da UFMA para teste de mapa realista.
+    Espalha as coordenadas pelos bairros da cidade de São Luís (MA).
     """
     tracker_ref = f"TRK_VIRTUAL_{index:03d}"
     pet_name = f"Pet Virtual #{index:03d}"
 
-    # Dispersão espacial controlada no campus universitário
-    lat_offset = ((index % 25) - 12) * 0.00035
-    lon_offset = ((index // 25) - 10) * 0.00030
-    lat = round(UFMA_CAMPUS_LAT + lat_offset, 6)
-    lon = round(UFMA_CAMPUS_LON + lon_offset, 6)
+    # Dispersão geográfica realista em São Luís
+    lat, lon, bairro = get_sao_luis_coordinates(index)
 
     payload = {
         "data": {
-            "description": f"Tracker Virtual {tracker_ref} ({pet_name})",
+            "description": f"Tracker Virtual {tracker_ref} ({pet_name} - {bairro})",
             "capabilities": ["location", "battery", "rssi", "speed", "status"],
             "status": "active",
             "lat": lat,
             "lon": lon,
+            "neighborhood": bairro,
             "city": "Sao Luis",
             "country": "Brazil"
         }
@@ -130,6 +128,8 @@ def register_single_resource(index: int, session=None) -> Dict[str, Any]:
         "tracker_ref": tracker_ref,
         "uuid": resource_uuid,
         "pet_name": pet_name,
+        "neighborhood": bairro,
+        "city": "Sao Luis",
         "lat": lat,
         "lon": lon,
         "live_registered": is_live

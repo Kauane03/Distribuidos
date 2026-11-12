@@ -6,7 +6,8 @@ import { voltageToPercent, getSignalQuality } from "../mqtt/helpers.js";
 import { db } from "../database/index.js";
 import { pets, trackers, petTrackers } from "../database/schema.js";
 import { eq, inArray } from "drizzle-orm";
-import { seedVirtualPets } from "../database/seed.js";
+import { seedVirtualPets, getSaoLuisCoordinates } from "../database/seed.js";
+import crypto from "node:crypto";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -94,12 +95,12 @@ class InterSCityService {
   }
 
   /**
-   * Garante que os 500 pets virtuais estejam cadastrados e carregados no cache
+   * Garante que os 1.500 pets virtuais estejam cadastrados e carregados no cache
    */
   private async ensureDatabaseSync(): Promise<void> {
     try {
-      // 1. Invoca o seeder para garantir que os 500 pets virtuais existam no MySQL
-      await seedVirtualPets(500);
+      const targetCount = Number(process.env.TOTAL_TRACKERS || 1500);
+      await seedVirtualPets(targetCount);
 
       // 2. Constrói o cache de vínculos entre trackers e pets
       const allTrackers = await db.select().from(trackers);
@@ -122,10 +123,11 @@ class InterSCityService {
             raca: pet.raca,
           });
 
-          // Inicializa localização no cache com coordenadas do recurso
+          // Inicializa localização no cache com coordenadas espalhadas por São Luís
+          const coords = getSaoLuisCoordinates(pet.id);
           const meta = this.resources.find((r) => r.tracker_ref === trk.trackerRef);
-          const initialLat = meta?.lat ?? -2.5578;
-          const initialLon = meta?.lon ?? -44.3113;
+          const initialLat = meta?.lat ?? coords.lat;
+          const initialLon = meta?.lon ?? coords.lon;
 
           this.cacheLatestLocations.set(trk.trackerRef, {
             id: pet.id,
@@ -135,8 +137,8 @@ class InterSCityService {
             raca: pet.raca,
             trackerId: trk.id,
             trackerRef: trk.trackerRef,
-            stickId: 1,
-            stickRef: "STICK_CCET_UFMA",
+            stickId: (pet.id % 5) + 1,
+            stickRef: (pet.id % 2 === 0) ? "STICK_CENTRO_HISTORICO" : "STICK_CCET_UFMA",
             lat: initialLat,
             lng: initialLon,
             rssi: 78,
@@ -153,10 +155,23 @@ class InterSCityService {
     }
   }
 
+  private generateDeterministicUuid(trackerRef: string): string {
+    const hash = crypto.createHash("sha1").update(`pawsition.${trackerRef}`).digest("hex");
+    return [
+      hash.substring(0, 8),
+      hash.substring(8, 12),
+      "5" + hash.substring(13, 16),
+      ((parseInt(hash.substring(16, 18), 16) & 0x3f) | 0x80).toString(16) + hash.substring(18, 20),
+      hash.substring(20, 32),
+    ].join("-");
+  }
+
   private loadLocalResources(): void {
     const candidates = [
       path.resolve(__dirname, "../../../data/interscity_resources.json"),
       path.resolve(__dirname, "../../../../simulators/interscity_resources.json"),
+      "/app/data/interscity_resources.json",
+      "/app/simulators/interscity_resources.json"
     ];
 
     for (const filePath of candidates) {
@@ -164,7 +179,7 @@ class InterSCityService {
         try {
           const raw = fs.readFileSync(filePath, "utf-8");
           const parsed = JSON.parse(raw);
-          if (Array.isArray(parsed.resources)) {
+          if (Array.isArray(parsed.resources) && parsed.resources.length > 0) {
             this.resources = parsed.resources;
             console.log(`[InterSCity] ${this.resources.length} recursos carregados de ${filePath}`);
             return;
@@ -174,6 +189,23 @@ class InterSCityService {
         }
       }
     }
+
+    // Se nenhum arquivo existir, gera os 1.500 mapeamentos de recursos em memória
+    const targetCount = Number(process.env.TOTAL_TRACKERS || 1500);
+    const generated: InterSCityResourceMeta[] = [];
+    for (let i = 1; i <= targetCount; i++) {
+      const ref = `TRK_VIRTUAL_${String(i).padStart(3, "0")}`;
+      const coords = getSaoLuisCoordinates(i);
+      generated.push({
+        tracker_ref: ref,
+        uuid: this.generateDeterministicUuid(ref),
+        pet_name: `Pet #${String(i).padStart(3, "0")} (${coords.bairro})`,
+        lat: coords.lat,
+        lon: coords.lon,
+      });
+    }
+    this.resources = generated;
+    console.log(`[InterSCity] Gerados em memória ${this.resources.length} recursos distribuídos por São Luís`);
   }
 
   private async fetchResourcesFromCatalog(): Promise<void> {
@@ -260,8 +292,8 @@ class InterSCityService {
     }
   }
 
-  private async syncIndividualResourcesInChunks(chunkSize = 25): Promise<void> {
-    const list = this.resources.slice(0, 500);
+  private async syncIndividualResourcesInChunks(chunkSize = 50): Promise<void> {
+    const list = this.resources;
 
     for (let i = 0; i < list.length; i += chunkSize) {
       const chunk = list.slice(i, i + chunkSize);

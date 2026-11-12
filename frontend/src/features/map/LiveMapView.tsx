@@ -36,8 +36,8 @@ interface LiveMapViewProps {
 
 export const LiveMapView: React.FC<LiveMapViewProps> = ({ locations, historyTrails }) => {
   const [selectedPetId, setSelectedPetId] = useState<number | null>(null);
-  const [center, setCenter] = useState<[number, number]>([-2.557812, -44.311345]);
-  const [zoom, setZoom] = useState<number>(16);
+  const [center, setCenter] = useState<[number, number]>([-2.5300, -44.2600]);
+  const [zoom, setZoom] = useState<number>(12);
 
   // Cria ícone customizado com foto do pet e anel de pulso
   const createCustomMarker = (loc: LocationPoint) => {
@@ -80,7 +80,7 @@ export const LiveMapView: React.FC<LiveMapViewProps> = ({ locations, historyTrai
         </div>
         <div className="flex items-center gap-2">
           <span className="text-xs font-mono text-purple-300 bg-purple-950/60 border border-purple-800/40 px-3 py-1.5 rounded-lg">
-            UFMA - Campus Bacanga &bull; São Luís - MA
+            Ilha de São Luís - MA &bull; {locations.length} Pets em Tempo Real
           </span>
         </div>
       </div>

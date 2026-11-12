@@ -62,6 +62,9 @@ services:
       MQTT_BROKER_URL: mqtt://mosquitto:1883
       MQTT_CLIENT_ID: pet-tracker-backend
       INTERSCITY_URL: http://interscity:8000
+      TOTAL_TRACKERS: 1500
+    volumes:
+      - ./simulators/interscity_resources.json:/app/data/interscity_resources.json:ro
     depends_on:
       mysql:
         condition: service_healthy
@@ -106,7 +109,10 @@ services:
       MQTT_HOST: mosquitto
       MQTT_PORT: 1883
       INTERSCITY_URL: http://interscity:8000
+      TOTAL_TRACKERS: 1500
       PYTHONUNBUFFERED: "1"
+    volumes:
+      - ./simulators/interscity_resources.json:/app/simulators/interscity_resources.json
     depends_on:
       interscity:
         condition: service_started

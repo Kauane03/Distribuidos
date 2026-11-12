@@ -29,7 +29,7 @@ import requests
 from requests.adapters import HTTPAdapter
 
 from simulators.tracker.tracker_sim import TrackerSimulator
-from simulators.common.geo import UFMA_CAMPUS_LAT, UFMA_CAMPUS_LON
+from simulators.common.geo import UFMA_CAMPUS_LAT, UFMA_CAMPUS_LON, get_sao_luis_coordinates
 from simulators.seed_interscity import seed_resources
 
 # Configuração de Logs
@@ -85,8 +85,8 @@ def parse_args():
     parser.add_argument(
         "--count",
         type=int,
-        default=500,
-        help="Quantidade de pets virtuais a serem simulados (padrão: 500)"
+        default=int(os.getenv("TOTAL_TRACKERS", "1500")),
+        help="Quantidade de pets virtuais a serem simulados (padrão: 1500)"
     )
     parser.add_argument(
         "--interval",
@@ -123,21 +123,23 @@ def main():
     # 1. Carrega mapeamento de UUIDs
     uuid_map = load_or_generate_uuids(total_pets)
 
-    # 2. Instancia os 500 simuladores de trackers em loop
+    # 2. Instancia os simuladores de trackers em loop distribuídos por São Luís
     simulators: List[TrackerSimulator] = []
     for i in range(1, total_pets + 1):
         ref = f"TRK_VIRTUAL_{i:03d}"
         res_uuid = uuid_map[ref]
 
-        # Distribuição geográfica gradual no mapa para visualização rica
-        lat_offset = ((i % 25) - 12) * 0.00035
-        lon_offset = ((i // 25) - 10) * 0.00030
+        # Distribuição geográfica ampla em São Luís (30 bairros diferentes)
+        lat, lon, bairro = get_sao_luis_coordinates(i)
 
         sim = TrackerSimulator(
             tracker_ref=ref,
             resource_uuid=res_uuid,
             interscity_url=interscity_url,
-            stick_ref="STICK_CCET_UFMA",
+            stick_ref="STICK_CENTRO_HISTORICO" if i % 2 == 0 else "STICK_CCET_UFMA",
+            start_lat=lat,
+            start_lon=lon
+        )
             center_lat=UFMA_CAMPUS_LAT + lat_offset,
             center_lon=UFMA_CAMPUS_LON + lon_offset,
             interval_seconds=args.interval

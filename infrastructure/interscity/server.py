@@ -51,13 +51,18 @@ class InterSCityHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = self.path.split("?")[0].rstrip("/")
 
-        # 1. GET /health
-        if path == "/health" or path == "":
+        # 1. GET /health e health checks oficiais
+        if path in ("/health", "/catalog/health_check", "/collector/health_check", ""):
             return self._send_json(200, {
+                "healthy": True,
                 "status": "online",
-                "service": "InterSCity Platform Emulator",
+                "service": "InterSCity Platform Middleware",
                 "resources_count": len(catalog_store)
             })
+
+        # 1.1 GET /catalog/capabilities
+        if path == "/catalog/capabilities":
+            return self._send_json(200, {"capabilities": ["location", "battery", "rssi", "speed", "status"]})
 
         # 2. GET /catalog/resources
         if path == "/catalog/resources":
@@ -113,7 +118,11 @@ class InterSCityHandler(BaseHTTPRequestHandler):
         except Exception:
             return self._send_json(400, {"error": "Invalid JSON body"})
 
-        # 1. POST /catalog/resources -> Cadastro de novo recurso no InterSCity
+        # 1. POST /catalog/capabilities -> Cadastro de capacidade no catálogo
+        if path == "/catalog/capabilities":
+            return self._send_json(201, {"status": "ok", "capability": body})
+
+        # 2. POST /catalog/resources -> Cadastro de novo recurso no InterSCity
         if path == "/catalog/resources":
             # Aceita {"data": {...}} ou {"resource": {...}} ou direto {...}
             res_data = body.get("data", body.get("resource", body))
