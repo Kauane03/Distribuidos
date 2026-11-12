@@ -51,8 +51,9 @@ async function bootstrap() {
     });
 
     // 3. Health check com status do cluster e middleware
-    fastify.get("/health", async () => {
+    const getHealthData = async () => {
       const dbOk = await testConnection();
+      const mem = process.memoryUsage();
       return {
         status: "ok",
         database: dbOk ? "connected" : "error",
@@ -62,6 +63,27 @@ async function bootstrap() {
           node_pid: process.pid,
           hostname: process.env.HOSTNAME || "backend-node",
           uptime: process.uptime(),
+          memory: {
+            rssMB: Math.round(mem.rss / 1024 / 1024),
+            heapUsedMB: Math.round(mem.heapUsed / 1024 / 1024),
+          },
+        },
+        timestamp: new Date().toISOString(),
+      };
+    };
+
+    fastify.get("/health", getHealthData);
+    fastify.get("/api/health", getHealthData);
+
+    fastify.get("/api/cluster/probe", async (req, reply) => {
+      const mem = process.memoryUsage();
+      return {
+        node_pid: process.pid,
+        hostname: process.env.HOSTNAME || "backend-node",
+        uptime: process.uptime(),
+        memory: {
+          rssMB: Math.round(mem.rss / 1024 / 1024),
+          heapUsedMB: Math.round(mem.heapUsed / 1024 / 1024),
         },
         timestamp: new Date().toISOString(),
       };

@@ -8,12 +8,14 @@ import {
   Router,
   History,
   Terminal,
+  Server,
 } from "lucide-react";
 
 export type NavTab =
   | "dashboard"
   | "map"
   | "pet-route"
+  | "servers"
   | "pets"
   | "trackers"
   | "sticks"
@@ -34,6 +36,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab, onlin
       label: "Mapa em Tempo Real",
       icon: MapPin,
       badge: onlineTrackersCount > 0 ? `${onlineTrackersCount} ao vivo` : undefined,
+    },
+    {
+      id: "servers" as NavTab,
+      label: "Servidores & Cluster",
+      icon: Server,
+      badge: "Cluster",
     },
     {
       id: "pet-route" as NavTab,

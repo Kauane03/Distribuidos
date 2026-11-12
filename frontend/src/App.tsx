@@ -5,6 +5,7 @@ import { AlertBanner } from "./components/AlertBanner";
 import { DashboardView } from "./features/dashboard/DashboardView";
 import { LiveMapView } from "./features/map/LiveMapView";
 import { LivePetRouteView } from "./features/map/LivePetRouteView";
+import { ClusterMonitorView } from "./features/servers/ClusterMonitorView";
 import { PetsView } from "./features/pets/PetsView";
 import { TrackersView } from "./features/trackers/TrackersView";
 import { SticksView } from "./features/sticks/SticksView";
@@ -261,6 +262,8 @@ export const App: React.FC = () => {
             {currentTab === "map" && (
               <LiveMapView locations={locations} historyTrails={historyTrails} />
             )}
+
+            {currentTab === "servers" && <ClusterMonitorView />}
 
             {currentTab === "pet-route" && (
               <LivePetRouteView
