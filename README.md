@@ -166,22 +166,99 @@ O teste de carga pode ser executado em duas etapas simples:
 
 ---
 
-## 5. 🔍 Comandos para Inspeção e Monitoramento do Cluster
+## 5. 🔍 Guia Completo de Comandos: Execução e Inspeção
+
+Todos os comandos devem ser executados a partir do diretório `Distribuidos`:
+```bash
+cd Distribuidos
+```
+
+### 5.1 Comandos para Iniciar e Gerenciar o Cluster
+
+| Objetivo | Comando |
+| :--- | :--- |
+| **Iniciar com 3 servidores backend (Recomendado)** | `./start.sh scale 3` |
+| **Iniciar em modo padrão** | `./start.sh docker` |
+| **Iniciar com a stack oficial completa do InterSCity** | `./start.sh official 3` |
+| **Iniciar em segundo plano (detached)** | `docker compose up -d --scale backend=3` |
+| **Recompilar e recriar os containers** | `docker compose up -d --build --scale backend=3` |
+| **Parar todos os containers e liberar portas** | `./start.sh down` |
+
+---
+
+### 5.2 Comandos para Inspeção e Monitoramento
 
 | Finalidade | Comando |
 | :--- | :--- |
-| **Painel completo de status** | `./start.sh status` |
-| **Listar containers ativos** | `docker compose ps` |
-| **Monitorar consumo (CPU / RAM)** | `docker stats` |
-| **Logs de todas as réplicas backend** | `docker compose logs -f backend` |
-| **Logs do Load Balancer Nginx** | `docker compose logs -f loadbalancer` |
-| **Logs dos Simuladores IoT** | `docker compose logs -f simulators` |
-| **Testar Round Robin (Header `X-Served-By`)** | `for i in 1 2 3; do curl -sI http://localhost:3000/health \| grep -iE "(HTTP/\|X-Served-By)"; done` |
-| **Testar Health Check JSON** | `curl -s http://localhost:3000/health \| python3 -m json.tool` |
-| **Métricas do Dashboard via API** | `curl -s http://localhost:3000/api/dashboard/stats \| python3 -m json.tool` |
-| **Consultar Recursos no InterSCity** | `curl -s http://localhost:8000/catalog/resources \| python3 -m json.tool` |
-| **Inspecionar Banco MySQL** | `docker exec -it pet-tracker-mysql mysql -upetuser -ppetpass pet_tracker_db -e "SELECT count(*) FROM pets; SELECT count(*) FROM trackers;"` |
-| **Parar cluster e liberar portas** | `./start.sh down` |
+| **Painel Geral de Diagnóstico (Status + Métricas + LB)** | `./start.sh status` |
+| **Listar containers ativos e portas** | `docker compose ps` |
+| **Consumo de CPU e Memória em tempo real** | `docker stats` |
+| **Acompanhar logs das 3 réplicas do backend** | `docker compose logs -f backend` |
+| **Acompanhar logs do Load Balancer (Nginx)** | `docker compose logs -f loadbalancer` |
+| **Acompanhar logs dos Simuladores IoT (1.500 pets)** | `docker compose logs -f simulators` |
+| **Acompanhar logs do Middleware InterSCity** | `docker compose logs -f interscity` |
+
+---
+
+### 5.3 Comandos para Testar o Balanceamento de Carga (Round Robin)
+
+Verifica o cabeçalho `X-Served-By` retornado pelo Nginx, comprovando que cada requisição é roteada sequencialmente para uma réplica diferente do cluster:
+
+```bash
+for i in 1 2 3; do curl -sI http://localhost:3000/health | grep -iE "(HTTP/|X-Served-By)"; done
+```
+*Saída esperada:*
+```text
+HTTP/1.1 200 OK
+X-Served-By: 172.25.0.9:3000   (backend-2)
+HTTP/1.1 200 OK
+X-Served-By: 172.25.0.5:3000   (backend-1)
+HTTP/1.1 200 OK
+X-Served-By: 172.25.0.10:3000  (backend-3)
+```
+
+Verificar o identificador do nó (hostname) atendendo via JSON:
+```bash
+curl -s http://localhost:3000/health | python3 -m json.tool
+```
+
+---
+
+### 5.4 Comandos para Inspecionar Telemetria e Dados
+
+**Métricas consolidadas do Dashboard:**
+```bash
+curl -s http://localhost:3000/api/dashboard/stats | python3 -m json.tool
+```
+
+**Consultar recursos cadastrados no InterSCity:**
+```bash
+curl -s http://localhost:8000/catalog/resources | python3 -m json.tool
+```
+
+**Consultar últimas telemetrias coletadas pelo InterSCity:**
+```bash
+curl -s http://localhost:8000/collector/resources/data/last | python3 -m json.tool
+```
+
+**Consultar contagem de registros diretamente no MySQL:**
+```bash
+docker exec -it pet-tracker-mysql mysql -upetuser -ppetpass pet_tracker_db -e "SELECT count(*) AS total_pets FROM pets; SELECT count(*) AS total_trackers FROM trackers; SELECT count(*) AS total_rastreios FROM rastreios;"
+```
+
+**Monitorar mensagens trafegando pelo broker MQTT:**
+```bash
+docker exec -it pet-tracker-mosquitto mosquitto_sub -t "ufma/tracker/#" -v
+```
+
+---
+
+### 5.5 Links de Acesso no Navegador
+
+- **Painel Administrativo Web:** [http://localhost:80](http://localhost:80) ou [http://localhost:5173](http://localhost:5173)
+- **API Load Balancer / Health Check:** [http://localhost:3000/health](http://localhost:3000/health)
+- **Status do Dashboard (API):** [http://localhost:3000/api/dashboard/stats](http://localhost:3000/api/dashboard/stats)
+- **Catálogo de Recursos InterSCity:** [http://localhost:8000/catalog/resources](http://localhost:8000/catalog/resources)
 
 ---
 
