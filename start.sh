@@ -47,23 +47,18 @@ elif [ "$MODE" = "status" ]; then
     echo ""
     echo "🩺 Health Check da API:"
     curl -s http://localhost:3000/health | python3 -m json.tool || true
-elif [ "$MODE" = "benchmark" ]; then
-    TOTAL_REQS=${2:-1000000}
-    echo "⚡ Disparando Teste de Carga Massivo no Cluster (${TOTAL_REQS} requisições)..."
-    node "$DIR/benchmark/stress_test_1m.js" "${TOTAL_REQS}"
 elif [ "$MODE" = "down" ]; then
     echo "🛑 Parando todos os containers e liberando portas..."
     docker compose -f docker-compose.yml -f docker-compose.official.yml down --remove-orphans || true
     docker compose down --remove-orphans || true
 else
-    echo "Uso: ./start.sh [docker | scale [N] | official [N] | infra | seed | sim | status | benchmark [N] | down]"
-    echo "  docker        : Executa todos os serviços via Docker Compose (padrão)"
-    echo "  scale [N]     : Sobe o cluster com N réplicas do backend (ex: ./start.sh scale 3)"
-    echo "  official [N]  : Sobe a stack oficial do InterSCity integrada ao Pet Tracker"
-    echo "  infra         : Sobe apenas MySQL, Mosquitto, InterSCity e LoadBalancer"
-    echo "  seed          : Registra os 1500 recursos no catálogo do InterSCity"
-    echo "  sim           : Executa os simuladores Python na máquina local"
-    echo "  status        : Exibe status dos containers, métricas e teste do balanceador Nginx"
-    echo "  benchmark [N] : Executa teste de carga massivo de 1M requisições (ou N requisições)"
-    echo "  down          : Para todos os containers e libera todas as portas"
+    echo "Uso: ./start.sh [docker | scale [N] | official [N] | infra | seed | sim | status | down]"
+    echo "  docker       : Executa todos os serviços via Docker Compose (padrão)"
+    echo "  scale [N]    : Sobe o cluster com N réplicas do backend (ex: ./start.sh scale 3)"
+    echo "  official [N] : Sobe a stack oficial do InterSCity integrada ao Pet Tracker"
+    echo "  infra        : Sobe apenas MySQL, Mosquitto, InterSCity e LoadBalancer"
+    echo "  seed         : Registra os 1500 recursos no catálogo do InterSCity"
+    echo "  sim          : Executa os simuladores Python na máquina local"
+    echo "  status       : Exibe status dos containers, métricas e teste do balanceador Nginx"
+    echo "  down         : Para todos os containers e libera todas as portas"
 fi

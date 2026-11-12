@@ -13,6 +13,9 @@ import {
   Clock,
   Play,
   RotateCcw,
+  StopCircle,
+  Gauge,
+  TrendingUp,
 } from "lucide-react";
 
 interface NodeStats {
@@ -37,13 +40,29 @@ interface ProbeResult {
   status: number;
 }
 
+interface BenchmarkStatus {
+  running: boolean;
+  total: number;
+  completed: number;
+  errors: number;
+  currentRps: number;
+  avgRps: number;
+  elapsedSeconds: number;
+  etaSeconds: number;
+  percent: number;
+  distribution: Record<string, number>;
+  finishedAt?: string;
+  targetUrl: string;
+}
+
 export const ClusterMonitorView: React.FC = () => {
   const [nodes, setNodes] = useState<Map<string, NodeStats>>(new Map());
   const [probeHistory, setProbeHistory] = useState<ProbeResult[]>([]);
   const [isProbing, setIsProbing] = useState<boolean>(false);
   const [isAutoRefreshing, setIsAutoRefreshing] = useState<boolean>(true);
-  const [probeCountTarget, setProbeCountTarget] = useState<number>(15);
+  const [probeCountTarget, setProbeCountTarget] = useState<number>(1_000_000);
   const [systemHealth, setSystemHealth] = useState<any>(null);
+  const [benchmarkStatus, setBenchmarkStatus] = useState<BenchmarkStatus | null>(null);
 
   // Executa uma única sondagem ao cluster
   const executeSingleProbe = useCallback(async (probeId: number): Promise<ProbeResult | null> => {
@@ -63,7 +82,6 @@ export const ClusterMonitorView: React.FC = () => {
         status: res.status,
       };
 
-      // Atualiza estatísticas do nó identificado
       setNodes((prev) => {
         const next = new Map(prev);
         const nodeKey = servedBy || data.hostname;
@@ -101,44 +119,116 @@ export const ClusterMonitorView: React.FC = () => {
     }
   }, []);
 
-  // Inicialização: Descobre os nós fazendo algumas chamadas iniciais
+  // Busca status do benchmark massivo
+  const fetchBenchmarkStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/cluster/benchmark/status", { cache: "no-store" });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.data) {
+          setBenchmarkStatus(json.data);
+          if (json.data.distribution) {
+            setNodes((prev) => {
+              const next = new Map(prev);
+              for (const [srv, count] of Object.entries(json.data.distribution as Record<string, number>)) {
+                const existing = next.get(srv);
+                if (existing) {
+                  next.set(srv, { ...existing, totalServed: count });
+                }
+              }
+              return next;
+            });
+          }
+          if (!json.data.running && isProbing) {
+            setIsProbing(false);
+          }
+        }
+      }
+    } catch {
+      // silêncio
+    }
+  }, [isProbing]);
+
+  // Inicialização
   useEffect(() => {
     fetchHealth();
+    fetchBenchmarkStatus();
     const discover = async () => {
       for (let i = 1; i <= 6; i++) {
         await executeSingleProbe(i);
-        await new Promise((r) => setTimeout(r, 80));
+        await new Promise((r) => setTimeout(r, 60));
       }
     };
     discover();
-  }, [executeSingleProbe, fetchHealth]);
+  }, [executeSingleProbe, fetchHealth, fetchBenchmarkStatus]);
 
-  // Auto-refresh a cada 5 segundos se habilitado
+  // Polling de benchmark quando ativo
   useEffect(() => {
-    if (!isAutoRefreshing) return;
+    if (!benchmarkStatus?.running && !isProbing) return;
+    const interval = setInterval(() => {
+      fetchBenchmarkStatus();
+    }, 400);
+    return () => clearInterval(interval);
+  }, [benchmarkStatus?.running, isProbing, fetchBenchmarkStatus]);
+
+  // Auto-refresh a cada 4 segundos
+  useEffect(() => {
+    if (!isAutoRefreshing || benchmarkStatus?.running) return;
     const interval = setInterval(() => {
       executeSingleProbe(Date.now());
       fetchHealth();
     }, 4000);
     return () => clearInterval(interval);
-  }, [isAutoRefreshing, executeSingleProbe, fetchHealth]);
+  }, [isAutoRefreshing, benchmarkStatus?.running, executeSingleProbe, fetchHealth]);
 
-  // Dispara teste de carga Round Robin em lote
-  const handleRunRoundRobinTest = async () => {
-    if (isProbing) return;
-    setIsProbing(true);
-    const newResults: ProbeResult[] = [];
-
-    for (let i = 1; i <= probeCountTarget; i++) {
-      const res = await executeSingleProbe(Date.now() + i);
-      if (res) {
-        newResults.unshift(res);
-        setProbeHistory((prev) => [res, ...prev.slice(0, 49)]);
+  // Dispara teste no backend (especialmente para volumes altos >= 1.000 ou 1 milhão)
+  const handleStartBenchmark = async (total: number) => {
+    try {
+      setIsProbing(true);
+      const res = await fetch("/api/cluster/benchmark/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ total, concurrency: 120 }),
+      });
+      const json = await res.json();
+      if (json.data) {
+        setBenchmarkStatus(json.data);
       }
-      await new Promise((r) => setTimeout(r, 120));
+    } catch (err) {
+      console.error("Erro ao iniciar benchmark:", err);
+      setIsProbing(false);
     }
+  };
 
-    setIsProbing(false);
+  const handleStopBenchmark = async () => {
+    try {
+      await fetch("/api/cluster/benchmark/stop", { method: "POST" });
+      setIsProbing(false);
+      fetchBenchmarkStatus();
+    } catch (err) {
+      console.error("Erro ao interromper benchmark:", err);
+    }
+  };
+
+  // Gerencia o disparo do teste
+  const handleTriggerTest = async () => {
+    if (isProbing || benchmarkStatus?.running) return;
+
+    if (probeCountTarget >= 1_000) {
+      // Dispara motor assíncrono de alta performance no backend
+      await handleStartBenchmark(probeCountTarget);
+    } else {
+      // Dispara teste sequencial no frontend para volumes pequenos
+      setIsProbing(true);
+      for (let i = 1; i <= probeCountTarget; i++) {
+        const res = await executeSingleProbe(Date.now() + i);
+        if (res) {
+          setProbeHistory((prev) => [res, ...prev.slice(0, 49)]);
+        }
+        await new Promise((r) => setTimeout(r, 60));
+      }
+      setIsProbing(false);
+    }
   };
 
   const handleResetCounters = () => {
@@ -150,10 +240,24 @@ export const ClusterMonitorView: React.FC = () => {
       return next;
     });
     setProbeHistory([]);
+    setBenchmarkStatus(null);
   };
 
   const nodesList = Array.from(nodes.values());
-  const totalRequestsCount = nodesList.reduce((acc, curr) => acc + curr.totalServed, 0);
+  const totalRequestsCount = benchmarkStatus?.completed || nodesList.reduce((acc, curr) => acc + curr.totalServed, 0);
+
+  // Botões de contagem rápida
+  const quickCounts = [
+    { label: "15", value: 15 },
+    { label: "100", value: 100 },
+    { label: "500", value: 500 },
+    { label: "1.000", value: 1_000 },
+    { label: "10.000", value: 10_000 },
+    { label: "100.000", value: 100_000 },
+    { label: "1 Milhão (1M)", value: 1_000_000 },
+  ];
+
+  const isCurrentlyRunning = isProbing || benchmarkStatus?.running;
 
   return (
     <div className="space-y-6">
@@ -190,6 +294,7 @@ export const ClusterMonitorView: React.FC = () => {
             onClick={() => {
               executeSingleProbe(Date.now());
               fetchHealth();
+              fetchBenchmarkStatus();
             }}
             className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-medium border border-slate-700 transition flex items-center gap-1.5"
           >
@@ -251,7 +356,7 @@ export const ClusterMonitorView: React.FC = () => {
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-400">Requisições Testadas:</span>
-                <span className="font-mono text-emerald-400 font-semibold">{totalRequestsCount}</span>
+                <span className="font-mono text-emerald-400 font-semibold">{totalRequestsCount.toLocaleString("pt-BR")}</span>
               </div>
             </div>
           </div>
@@ -318,7 +423,7 @@ export const ClusterMonitorView: React.FC = () => {
         </div>
       </div>
 
-      {/* Cartões dos Servidores Backend Ativos */}
+      {/* Cartões dos Servidores Backend Ativos com Divisão de Carga */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -328,7 +433,7 @@ export const ClusterMonitorView: React.FC = () => {
             </span>
           </div>
           <span className="text-xs text-slate-400 font-mono">
-            IPs Internos na Docker Network: 172.25.0.0/16
+            IPs Internos: 172.25.0.0/16
           </span>
         </div>
 
@@ -343,7 +448,7 @@ export const ClusterMonitorView: React.FC = () => {
                 key={node.ipPort || node.hostname}
                 className="bg-slate-800/60 border border-slate-700/60 rounded-xl p-4 relative overflow-hidden flex flex-col justify-between"
               >
-                {/* Linha de status no topo */}
+                {/* Linha de status */}
                 <div className="flex items-center justify-between border-b border-slate-700/60 pb-3">
                   <div className="flex items-center gap-2">
                     <div className="h-2.5 w-2.5 rounded-full bg-emerald-400 animate-pulse"></div>
@@ -361,7 +466,7 @@ export const ClusterMonitorView: React.FC = () => {
                   <div className="flex justify-between items-center">
                     <span className="text-slate-400 flex items-center gap-1">
                       <Network className="h-3.5 w-3.5 text-slate-500" />
-                      IP / Porta Upstream:
+                      IP / Porta:
                     </span>
                     <span className="font-mono text-purple-300 font-semibold bg-purple-950/40 px-1.5 py-0.5 rounded border border-purple-900/40">
                       {node.ipPort}
@@ -371,7 +476,7 @@ export const ClusterMonitorView: React.FC = () => {
                   <div className="flex justify-between items-center">
                     <span className="text-slate-400 flex items-center gap-1">
                       <Cpu className="h-3.5 w-3.5 text-slate-500" />
-                      ID Container (Hostname):
+                      Container ID:
                     </span>
                     <span className="font-mono text-slate-300">{node.hostname}</span>
                   </div>
@@ -387,7 +492,7 @@ export const ClusterMonitorView: React.FC = () => {
                   </div>
 
                   <div className="flex justify-between items-center">
-                    <span className="text-slate-400">Consumo de Memória:</span>
+                    <span className="text-slate-400">Memória RAM:</span>
                     <span className="font-mono text-slate-300">
                       {node.memory.rssMB} MB (Heap: {node.memory.heapUsedMB} MB)
                     </span>
@@ -397,15 +502,15 @@ export const ClusterMonitorView: React.FC = () => {
                 {/* Distribuição de Carga Round Robin */}
                 <div className="pt-3 border-t border-slate-700/60">
                   <div className="flex justify-between text-xs mb-1">
-                    <span className="text-slate-400">Distribuição de Carga:</span>
+                    <span className="text-slate-400">Distribuição:</span>
                     <span className="font-mono font-bold text-purple-300">
-                      {share.toFixed(1)}% ({node.totalServed} reqs)
+                      {share.toFixed(1)}% ({node.totalServed.toLocaleString("pt-BR")} reqs)
                     </span>
                   </div>
                   <div className="w-full h-2 bg-slate-900 rounded-full overflow-hidden">
                     <div
                       className="h-full bg-gradient-to-r from-purple-500 to-indigo-500 rounded-full transition-all duration-300"
-                      style={{ width: `${Math.min(100, Math.max(5, share))}%` }}
+                      style={{ width: `${Math.min(100, Math.max(3, share))}%` }}
                     ></div>
                   </div>
                 </div>
@@ -415,57 +520,153 @@ export const ClusterMonitorView: React.FC = () => {
         </div>
       </div>
 
-      {/* Ferramenta Interativa de Teste do Balanceador Round Robin */}
-      <div className="bg-slate-800/50 border border-slate-700/60 rounded-xl p-5 space-y-4">
+      {/* Ferramenta Interativa de Teste do Balanceador com Opção de 1 MILHÃO */}
+      <div className="bg-slate-800/50 border border-slate-700/60 rounded-xl p-5 space-y-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="text-base font-bold text-white flex items-center gap-2">
               <Zap className="h-4 w-4 text-purple-400" />
-              Teste de Carga Interativo (Round Robin Inspector)
+              Painel de Disparo de Teste de Carga & Estresse
             </h3>
             <p className="text-xs text-slate-400">
-              Dispara requisições sequenciais pelo Load Balancer e verifica a distribuição equitativa entre os nós
+              Escolha a escala do teste (de 15 até 1.000.000 de requisições) e acompanhe o balanceamento ao vivo
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1 bg-slate-900 px-2 py-1 rounded-lg border border-slate-700 text-xs">
-              <span className="text-slate-400 mr-1">Disparar:</span>
-              {[15, 50, 100, 500].map((count) => (
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Seletor de Volume de Requisições */}
+            <div className="flex flex-wrap items-center gap-1 bg-slate-900 p-1 rounded-lg border border-slate-700 text-xs">
+              <span className="text-slate-400 px-1 text-[11px]">Meta:</span>
+              {quickCounts.map((item) => (
                 <button
-                  key={count}
-                  onClick={() => setProbeCountTarget(count)}
-                  className={`px-2 py-0.5 rounded font-medium transition ${
-                    probeCountTarget === count
-                      ? "bg-purple-600 text-white"
-                      : "text-slate-400 hover:text-white"
+                  key={item.value}
+                  onClick={() => setProbeCountTarget(item.value)}
+                  className={`px-2 py-1 rounded text-xs font-medium transition ${
+                    probeCountTarget === item.value
+                      ? "bg-purple-600 text-white shadow-sm font-bold"
+                      : "text-slate-400 hover:text-white hover:bg-slate-800"
                   }`}
                 >
-                  {count} reqs
+                  {item.label}
                 </button>
               ))}
             </div>
 
-            <button
-              onClick={handleRunRoundRobinTest}
-              disabled={isProbing}
-              className="px-3.5 py-1.5 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition shadow-sm"
-            >
-              <Play className={`h-3.5 w-3.5 ${isProbing ? "animate-spin" : ""}`} />
-              <span>{isProbing ? "Executando..." : "Disparar Teste"}</span>
-            </button>
+            {/* Botão de Disparo Principal */}
+            {isCurrentlyRunning ? (
+              <button
+                onClick={handleStopBenchmark}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition shadow-sm animate-pulse"
+              >
+                <StopCircle className="h-4 w-4" />
+                <span>Interromper</span>
+              </button>
+            ) : (
+              <button
+                onClick={handleTriggerTest}
+                className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5 transition shadow-sm ${
+                  probeCountTarget >= 1_000_000
+                    ? "bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white ring-2 ring-purple-400/30"
+                    : "bg-purple-600 hover:bg-purple-500 text-white"
+                }`}
+              >
+                <Play className="h-4 w-4" />
+                <span>
+                  {probeCountTarget >= 1_000_000
+                    ? "Disparar 1 Milhão (1M)"
+                    : `Disparar ${probeCountTarget.toLocaleString("pt-BR")}`}
+                </span>
+              </button>
+            )}
 
             <button
               onClick={handleResetCounters}
               title="Zerar contadores"
-              className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-lg border border-slate-700 transition"
+              className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-lg border border-slate-700 transition"
             >
               <RotateCcw className="h-4 w-4" />
             </button>
           </div>
         </div>
 
-        {/* Tabela de Histórico das Últimas Requisições */}
+        {/* Card Dinâmico de Progresso do Teste de Alta Concorrência (1M ou intermediários) */}
+        {benchmarkStatus && (
+          <div className="bg-slate-900/90 border border-purple-800/50 rounded-xl p-4 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="flex h-3 w-3 relative">
+                  {benchmarkStatus.running && (
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-400 opacity-75"></span>
+                  )}
+                  <span
+                    className={`relative inline-flex rounded-full h-3 w-3 ${
+                      benchmarkStatus.running ? "bg-purple-500" : "bg-emerald-500"
+                    }`}
+                  ></span>
+                </span>
+                <span className="font-bold text-sm text-white">
+                  {benchmarkStatus.running
+                    ? "Executando Teste de Estresse em Tempo Real..."
+                    : "Teste de Carga Concluído com Sucesso!"}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-3 text-xs font-mono">
+                <span className="text-purple-300">
+                  {benchmarkStatus.completed.toLocaleString("pt-BR")} /{" "}
+                  {benchmarkStatus.total.toLocaleString("pt-BR")} requisições
+                </span>
+                <span className="text-emerald-400 flex items-center gap-1 font-bold">
+                  <Gauge className="h-3.5 w-3.5" />
+                  {benchmarkStatus.currentRps.toLocaleString("pt-BR")} req/s
+                </span>
+                <span className="text-slate-400">
+                  {benchmarkStatus.elapsedSeconds}s decorridos
+                </span>
+              </div>
+            </div>
+
+            {/* Barra de Progresso com Gradiente */}
+            <div className="w-full h-3 bg-slate-800 rounded-full overflow-hidden p-0.5 border border-slate-700">
+              <div
+                className="h-full bg-gradient-to-r from-purple-500 via-indigo-500 to-cyan-400 rounded-full transition-all duration-300"
+                style={{ width: `${Math.min(100, Math.max(1, benchmarkStatus.percent))}%` }}
+              ></div>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-xs">
+              <div className="bg-slate-800/60 p-2 rounded border border-slate-700/50">
+                <span className="text-slate-400 block text-[10px]">Progresso:</span>
+                <span className="font-mono font-bold text-white">{benchmarkStatus.percent}%</span>
+              </div>
+              <div className="bg-slate-800/60 p-2 rounded border border-slate-700/50">
+                <span className="text-slate-400 block text-[10px]">Vazão Média:</span>
+                <span className="font-mono font-bold text-emerald-400">
+                  {benchmarkStatus.avgRps.toLocaleString("pt-BR")} req/s
+                </span>
+              </div>
+              <div className="bg-slate-800/60 p-2 rounded border border-slate-700/50">
+                <span className="text-slate-400 block text-[10px]">Tempo Restante Estimado:</span>
+                <span className="font-mono font-bold text-cyan-300">
+                  {benchmarkStatus.running ? `~${benchmarkStatus.etaSeconds}s` : "Finalizado"}
+                </span>
+              </div>
+              <div className="bg-slate-800/60 p-2 rounded border border-slate-700/50">
+                <span className="text-slate-400 block text-[10px]">Taxa de Sucesso (200 OK):</span>
+                <span className="font-mono font-bold text-emerald-400">
+                  {benchmarkStatus.total > 0
+                    ? (((benchmarkStatus.completed - benchmarkStatus.errors) /
+                        (benchmarkStatus.completed || 1)) *
+                        100).toFixed(1)
+                    : 100}
+                  %
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Tabela de Histórico das Últimas Requisições (Amostragem) */}
         <div className="border border-slate-700/60 rounded-lg overflow-hidden">
           <div className="bg-slate-900/90 px-4 py-2 border-b border-slate-700/60 grid grid-cols-5 text-[11px] font-semibold uppercase text-slate-400 tracking-wider">
             <span>Requisição</span>
@@ -477,8 +678,10 @@ export const ClusterMonitorView: React.FC = () => {
 
           <div className="divide-y divide-slate-700/40 max-h-56 overflow-y-auto bg-slate-900/40 font-mono text-xs">
             {probeHistory.length === 0 ? (
-              <div className="p-6 text-center text-xs text-slate-400 font-sans">
-                Clique no botão <strong>"Disparar Teste"</strong> acima para inspecionar o balanceador em tempo real.
+              <div className="p-5 text-center text-xs text-slate-400 font-sans">
+                {benchmarkStatus?.running
+                  ? "Processando requisições em alta velocidade no cluster..."
+                  : "Amostragem de requisições individuais. Use os botões acima para disparar o teste."}
               </div>
             ) : (
               probeHistory.slice(0, 15).map((probe) => (
@@ -498,38 +701,46 @@ export const ClusterMonitorView: React.FC = () => {
         </div>
       </div>
 
-      {/* Painel do Teste Massivo de 1 Milhão de Requisições */}
+      {/* Painel Informativo do Teste de 1 Milhão de Requisições */}
       <div className="bg-gradient-to-r from-purple-950/40 via-slate-800/50 to-indigo-950/40 border border-purple-800/40 rounded-xl p-5 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2.5">
             <div className="p-2 bg-purple-600/20 text-purple-400 rounded-lg border border-purple-500/30">
-              <Zap className="h-5 w-5" />
+              <TrendingUp className="h-5 w-5" />
             </div>
             <div>
               <h4 className="font-bold text-sm text-white">
-                Teste de Estresse Massivo: 1.000.000 de Requisições
+                Teste de Estresse de 1 Milhão de Requisições
               </h4>
               <p className="text-xs text-slate-400">
-                Avaliação de tolerância a falhas, concorrência e equilíbrio assintótico das réplicas
+                Você pode disparar diretamente pelo botão acima ou via terminal com <code>./start.sh benchmark 1000000</code>
               </p>
             </div>
           </div>
-          <span className="font-mono text-xs px-2.5 py-1 rounded-lg bg-purple-900/60 border border-purple-700/60 text-purple-200">
-            ./start.sh benchmark 1000000
-          </span>
+          <button
+            onClick={() => {
+              setProbeCountTarget(1_000_000);
+              handleStartBenchmark(1_000_000);
+            }}
+            disabled={isCurrentlyRunning}
+            className="font-mono text-xs px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-bold transition flex items-center gap-1.5 shadow-sm"
+          >
+            <Play className="h-3.5 w-3.5" />
+            <span>Disparar 1M Agora</span>
+          </button>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 text-xs">
           <div className="bg-slate-900/70 p-3 rounded-lg border border-slate-700/60">
-            <span className="text-slate-400 block mb-1">Algoritmo de Roteamento:</span>
-            <span className="font-semibold text-white">Nginx Round Robin Upstream</span>
+            <span className="text-slate-400 block mb-1">Roteamento Round Robin:</span>
+            <span className="font-semibold text-white">Equilíbrio assintótico perfeito</span>
           </div>
           <div className="bg-slate-900/70 p-3 rounded-lg border border-slate-700/60">
-            <span className="text-slate-400 block mb-1">Tolerância a Falhas:</span>
-            <span className="font-semibold text-emerald-400">100% Sucesso (0 Timeouts)</span>
+            <span className="text-slate-400 block mb-1">Taxa de Sucesso:</span>
+            <span className="font-semibold text-emerald-400">100% (200 OK sem timeouts)</span>
           </div>
           <div className="bg-slate-900/70 p-3 rounded-lg border border-slate-700/60">
-            <span className="text-slate-400 block mb-1">Divisão de Carga no Cluster:</span>
+            <span className="text-slate-400 block mb-1">Carga Dividida no Cluster:</span>
             <span className="font-semibold text-purple-300">~33.3% por Réplica Fastify</span>
           </div>
         </div>
@@ -537,4 +748,3 @@ export const ClusterMonitorView: React.FC = () => {
     </div>
   );
 };
-

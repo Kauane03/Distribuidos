@@ -18,6 +18,7 @@ import { locationRoutes } from "./modules/locations/location.routes.js";
 import { eventRoutes } from "./modules/events/event.routes.js";
 import { dashboardRoutes } from "./modules/dashboard/dashboard.routes.js";
 import { associationRoutes } from "./modules/pets/association.routes.js";
+import { benchmarkRoutes } from "./modules/benchmark/benchmark.routes.js";
 
 dotenv.config();
 
@@ -122,6 +123,7 @@ async function bootstrap() {
     await fastify.register(eventRoutes, { prefix: "/api" });
     await fastify.register(dashboardRoutes, { prefix: "/api" });
     await fastify.register(associationRoutes, { prefix: "/api" });
+    await fastify.register(benchmarkRoutes, { prefix: "/api" });
 
     // 5. Inicialização do Banco de Dados (Migrate e Seed)
     console.log("[Bootstrap] Verificando banco de dados...");
