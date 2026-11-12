@@ -53,7 +53,7 @@ if (Instâncias ativas no pool upstream?) then (sim)
     :Aplicar algoritmo Round-Robin;
     :Encaminhar requisição para Réplica disponível (3001);
 else (não)
-    #Pink:Retornar HTTP 502 Bad Gateway;
+    :Retornar HTTP 502 Bad Gateway; <<#Pink>>
     stop
 endif
 
@@ -74,10 +74,10 @@ if (Violação de regras detectada?) then (sim)
     |Broker MQTT (Mosquitto)|
     :Entregar alerta via WebSocket;
     |Frontend Web (React/Leaflet)|
-    #Yellow:Exibir notificação visual de alerta de fuga/saúde;
+    :Exibir notificação visual de alerta de fuga/saúde; <<#Yellow>>
 else (não)
     |Frontend Web (React/Leaflet)|
-    #LightGreen:Atualizar posição do marcador no mapa sem refresh;
+    :Atualizar posição do marcador no mapa sem refresh; <<#LightGreen>>
 endif
 
 |Frontend Web (React/Leaflet)|
@@ -120,28 +120,28 @@ if (Coordenadas válidas?) then (sim)
     if (Ponto (lat, lng) está contido no polígono seguro?) then (sim)
         :Manter status do pet como 'SAFE';
     else (não)
-        #Pink:Marcar status como 'OUT_OF_BOUNDS';
+        :Marcar status como 'OUT_OF_BOUNDS'; <<#Pink>>
         :Criar objeto de Alerta de Fuga (Severidade Alta);
         :Disparar notificação de alarme;
     endif
     
     if (heart_rate < 50 ou heart_rate > 160) then (sim)
-        #Orange:Criar objeto de Alerta de Saúde (BPM Anômalo);
+        :Criar objeto de Alerta de Saúde (BPM Anômalo); <<#Orange>>
         :Disparar notificação de saúde crítica;
     else (não)
         :Vitais estáveis;
     endif
 
     if (battery <= 20) then (sim)
-        #Yellow:Criar Alerta de Bateria Fraca;
+        :Criar Alerta de Bateria Fraca; <<#Yellow>>
     endif
 
     :Persistir telemetria e alertas no banco relacional;
     :Emitir evento de atualização no canal em tempo real;
-    #LightGreen:Concluir processamento com sucesso (ACK);
+    :Concluir processamento com sucesso (ACK); <<#LightGreen>>
     stop
 else (não)
-    #Pink:Descartar payload corrompido;
+    :Descartar payload corrompido; <<#Pink>>
     :Registrar log de aviso no logger;
     end
 endif
@@ -208,7 +208,7 @@ repeat while (completed_requests < 1.000.000?) is (sim) not (não)
 |Frontend Web (React/Leaflet)|
 :Polling em tempo real a cada 1s consulta /api/cluster/benchmark/status;
 :Exibir 100% concluído com distribuição idêntica (~33,3% por réplica);
-#LightGreen:Teste de 1 Milhão finalizado com sucesso;
+:Teste de 1 Milhão finalizado com sucesso; <<#LightGreen>>
 stop
 @enduml
 ```
@@ -237,14 +237,14 @@ while (Dispositivo energizado?) is (sim)
         :Enviar pacote MQTT (QoS 0/1);
         :Aguardar intervalo padrão (5 segundos);
     elseif (Nível de Bateria > 5%) then (<= 20%)
-        #Yellow:Modo de Economia de Energia (Eco Mode);
+        :Modo de Economia de Energia (Eco Mode); <<#Yellow>>
         :Desligar módulo de alta precisão GPS;
         :Utilizar triangulação por antenas locais;
         :Empacotar telemetria simplificada;
         :Enviar pacote MQTT com flag 'battery_low';
         :Aguardar intervalo estendido (30 segundos);
     else (Crítico <= 5%)
-        #Pink:Modo de Sobrevivência (Emergency);
+        :Modo de Sobrevivência (Emergency); <<#Pink>>
         :Enviar último pacote 'EMERGENCY_LAST_GASP';
         :Suspender sensores secundários;
         :Desconectar rádio e entrar em Deep Sleep;
