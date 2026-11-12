@@ -33,17 +33,32 @@ elif [ "$MODE" = "seed" ]; then
 elif [ "$MODE" = "sim" ]; then
     echo "🚀 Iniciando simulador Python com 500 pets virtuais..."
     python3 "$DIR/simulators/main.py" --interval 3
+elif [ "$MODE" = "status" ]; then
+    echo "📊 Status dos Containers do Cluster:"
+    docker compose ps
+    echo ""
+    echo "📈 Consumo de CPU e Memória (Docker Stats):"
+    docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}"
+    echo ""
+    echo "⚖️  Verificando Balanceamento de Carga Round Robin (Nginx -> Réplicas):"
+    for i in 1 2 3; do
+        curl -sI http://localhost:3000/health | grep -iE "(HTTP/|X-Served-By)" || true
+    done
+    echo ""
+    echo "🩺 Health Check da API:"
+    curl -s http://localhost:3000/health | python3 -m json.tool || true
 elif [ "$MODE" = "down" ]; then
     echo "🛑 Parando todos os containers e liberando portas..."
     docker compose -f docker-compose.yml -f docker-compose.official.yml down --remove-orphans || true
     docker compose down --remove-orphans || true
 else
-    echo "Uso: ./start.sh [docker | scale [N] | official [N] | infra | seed | sim | down]"
+    echo "Uso: ./start.sh [docker | scale [N] | official [N] | infra | seed | sim | status | down]"
     echo "  docker       : Executa todos os serviços via Docker Compose (padrão)"
     echo "  scale [N]    : Sobe o cluster com N réplicas do backend (ex: ./start.sh scale 3)"
     echo "  official [N] : Sobe a stack oficial do InterSCity integrada ao Pet Tracker"
     echo "  infra        : Sobe apenas MySQL, Mosquitto, InterSCity e LoadBalancer"
-    echo "  seed         : Registra os 500 recursos no catálogo do InterSCity"
+    echo "  seed         : Registra os 1500 recursos no catálogo do InterSCity"
     echo "  sim          : Executa os simuladores Python na máquina local"
+    echo "  status       : Exibe status dos containers, métricas e teste do balanceador Nginx"
     echo "  down         : Para todos os containers e libera todas as portas"
 fi
