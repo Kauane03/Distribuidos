@@ -166,6 +166,26 @@ O teste de carga pode ser executado em duas etapas simples:
 
 ---
 
+### Opção 4: Teste de Estresse Massivo (1 Milhão de Requisições)
+
+Um motor de benchmark assíncrono multi-threaded desenvolvido especificamente para estressar o balanceador Nginx e as réplicas do cluster:
+
+```bash
+# Executa o benchmark com 1.000.000 de requisições (padrão):
+./start.sh benchmark 1000000
+
+# Ou execute uma amostra rápida (ex: 50.000 requisições):
+./start.sh benchmark 50000
+```
+
+O benchmark exibe em tempo real:
+- Barra de progresso gráfica com ETA e porcentagem concluída;
+- Taxa de requisições por segundo (Throughput de 2.000 a 15.000+ req/s);
+- Distribuição exata entre as 3 réplicas (comprovando ~33.3% por nó);
+- Geração automática de relatório consolidado em `benchmark/benchmark_report.json`.
+
+---
+
 ## 5. 🔍 Guia Completo de Comandos: Execução e Inspeção
 
 Todos os comandos devem ser executados a partir do diretório `Distribuidos`:

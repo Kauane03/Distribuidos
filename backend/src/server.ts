@@ -25,7 +25,7 @@ const port = Number(process.env.PORT) || 3000;
 const host = process.env.HOST || "0.0.0.0";
 
 const fastify = Fastify({
-  logger: true,
+  logger: process.env.NODE_ENV === "production" ? false : { level: "warn" },
 });
 
 async function bootstrap() {

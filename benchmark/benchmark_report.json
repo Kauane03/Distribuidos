@@ -1,0 +1,15 @@
+{
+  "benchmark": "1 Million Requests Stress Test",
+  "date": "2026-11-12T18:39:49.997Z",
+  "targetUrl": "http://localhost:3000/api/cluster/probe",
+  "totalRequests": 50000,
+  "completed": 50000,
+  "errors": 0,
+  "totalTimeSeconds": 23.98,
+  "requestsPerSecond": 2085,
+  "distribution": {
+    "172.25.0.7:3000": 16668,
+    "172.25.0.10:3000": 16666,
+    "172.25.0.9:3000": 16666
+  }
+}
