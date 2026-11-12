@@ -259,15 +259,66 @@ Através do [docker-compose.yml](file:///home/yuri/Documentos/UFMA/Kauane/Distri
 
 ---
 
+## Conceito 10: Middleware para Cidades Inteligentes e Ingestão Desacoplada (InterSCity)
+
+### Teoria
+Em sistemas distribuídos urbanos e de larga escala (Smart Cities), a ingestão direta de telemetria no servidor de aplicação cria um gargalo crítico (*bottleneck*) e forte acoplamento tecnológico. A introdução de um **Middleware** atua como camada intermediária de abstração, padronizando a descoberta de recursos, catálogo de capacidades e persistência de séries temporais de sensores.
+
+### Aplicação no Projeto
+- O projeto integra a plataforma brasileira **InterSCity**:
+  - **Resource Catalog (`/catalog/resources`):** Centraliza o registro formal de todos os 500 dispositivos com metadados semânticos e espaciais (`lat`, `lon`, `capabilities: [location, battery, rssi]`).
+  - **Data Collector (`/collector/resources/{uuid}/data`):** Ponto único e de alta eficiência para ingestão da telemetria de sensores.
+- Os simuladores Python deixam de sobrecarregar o broker e o backend com conexão síncrona ponto a ponto, enviando suas medições via HTTP POST para a API REST do InterSCity Data Collector.
+- O backend consulta periodicamente a API do coletor (`GET /collector/resources/{uuid}/data/last`), atuando como consumidor desacoplado e focado nas regras de negócio e entrega aos clientes.
+
+---
+
+## Conceito 11: Escalabilidade Horizontal e Balanceamento de Carga (Load Balancer Nginx - Round Robin)
+
+### Teoria
+A **Escalabilidade Vertical** (aumentar CPU/RAM de uma única máquina) atinge limites físicos e econômicos rápidos. A **Escalabilidade Horizontal** (*Scale Out*), princípio basilar dos Sistemas Distribuídos, propõe a adição de múltiplos nós equivalentes (*stateless replicas*) para dividir a carga de trabalho. Para distribuir o tráfego uniformemente entre esses nós, emprega-se um **Balanceador de Carga** (*Load Balancer*).
+
+### Aplicação no Projeto
+- **Remoção de Portas Estáticas e Nomes de Container:** O serviço `backend` no `docker-compose.yml` expõe sua porta apenas internamente na rede Docker (`expose: 3000`), permitindo subir múltiplas réplicas simultâneas via comando:
+  ```bash
+  docker compose up --scale backend=3
+  ```
+- **Load Balancer Nginx (Round Robin):**
+  - O Nginx é posicionado à frente do cluster como ponto de entrada (`localhost:3000`), distribuindo as requisições em regime circular (*Round Robin*) entre as réplicas ativas:
+  ```nginx
+  upstream backend_cluster {
+      server backend:3000;
+  }
+  ```
+- **Suporte a WebSockets no Proxy Reverso:**
+  - Para garantir a comunicação full-duplex contínua entre o frontend React e os nós backend através do balanceador, o Nginx foi configurado com upgrade de cabeçalhos (`Upgrade $http_upgrade`, `Connection $connection_upgrade`) e timeouts estendidos de 3600 segundos (`proxy_read_timeout 3600s`), evitando que as conexões em tempo real sejam derrubadas pelo proxy.
+
+---
+
+## Conceito 12: Teste de Carga e Avaliação de Desempenho em Escala IoT (500 Nós Virtuais)
+
+### Teoria
+Para validar a resiliência, latência e vazão (*throughput*) de um sistema distribuído, submete-se o cluster a condições de estresse simulando centenas ou milhares de clientes simultâneos gerando tráfego concorrente.
+
+### Aplicação no Projeto
+- O script `seed_interscity.py` realiza o provisionamento em massa de 500 recursos no InterSCity Catalog utilizando um pool de threads (`ThreadPoolExecutor`), registrando `TRK_VIRTUAL_001` até `TRK_VIRTUAL_500` e gerando mapeamento rápido `O(1)` de UUIDs.
+- O simulador `main.py` executa o teste de carga:
+  - 500 coleiras virtuais operam em regime de concorrência controlada.
+  - O envio HTTP utiliza sessões persistentes com *connection pooling* (`HTTPAdapter`), reaproveitando sockets TCP e gerando uma vazão de aproximadamente **~166 requisições por segundo** sem sobrecarregar o sistema operacional.
+
+---
+
 ## 📊 Matriz Resumo dos Conceitos
 
 | Conceito de Sistemas Distribuídos | Componente Envolvido | Implementação Prática no Código |
 | :--- | :--- | :--- |
 | **Troca de Mensagens (IPC)** | Python Simulators $\leftrightarrow$ Mosquitto | Pacotes serializados em JSON via TCP socket |
 | **Publish/Subscribe** | Mosquitto Broker | Desacoplamento temporal e espacial nos tópicos `pawsition/*` |
+| **Middleware de Smart City** | Plataforma InterSCity | Resource Catalog e Data Collector desacoplando ingestão IoT |
+| **Escalabilidade Horizontal** | Docker Compose (`--scale backend=N`) | Cluster com réplicas dinâmicas do Fastify sem portas estáticas |
+| **Balanceamento de Carga** | Nginx Load Balancer | Algoritmo Round Robin e upgrade de WebSocket no proxy |
+| **Teste de Carga & Throughput** | `simulators/main.py` (500 pets) | Ingestão concorrente de 500 dispositivos a ~166 req/s |
 | **Detecção de Falhas (LWT)** | `mqtt_client.py` e Mosquitto | Disparo automático de status `offline` na queda de conexão |
 | **Assincronismo & Concorrência** | Fastify (Node.js) | Event Loop não-bloqueante para alta vazão de telemetria |
 | **Comunicação Push (Real-Time)** | Servidor WebSocket e React | Túnel full-duplex (`/ws`) atualizando o mapa sem polling |
-| **Edge Computing / Gateways** | Sticks Simulator | Gateways Wi-Fi intermediando coleiras e aceitando comandos |
 | **Consistência e Validação** | `helpers.ts` (Haversine) | Filtro de distância geodésica mínima de $3\text{ m}$ |
-| **Virtualização e Rede** | Docker Compose | Rede bridge isolada, DNS interno e healthchecks |
