@@ -32,15 +32,25 @@ services:
       - ./infrastructure/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - mosquitto_data:/mosquitto/data
 
-  # 3. Backend (Node.js + Fastify + TypeScript + Drizzle ORM + WebSocket)
+  # 3. Middleware InterSCity (Resource Catalog e Data Collector)
+  interscity:
+    build:
+      context: ./infrastructure/interscity
+      dockerfile: Dockerfile
+    container_name: pet-tracker-interscity
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+
+  # 4. Backend Escalável Horizontalmente (Node.js + Fastify + TypeScript + Drizzle ORM + WebSocket)
+  # Sem container_name e sem porta de host estática para permitir: docker compose up --scale backend=N
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: pet-tracker-backend
     restart: unless-stopped
-    ports:
-      - "3000:3000"
+    expose:
+      - "3000"
     environment:
       PORT: 3000
       HOST: 0.0.0.0
@@ -51,13 +61,28 @@ services:
       DB_NAME: pet_tracker_db
       MQTT_BROKER_URL: mqtt://mosquitto:1883
       MQTT_CLIENT_ID: pet-tracker-backend
+      INTERSCITY_URL: http://interscity:8000
     depends_on:
       mysql:
         condition: service_healthy
       mosquitto:
         condition: service_started
+      interscity:
+        condition: service_started
 
-  # 4. Frontend Administrativo (React + TypeScript + Vite + Tailwind + Leaflet)
+  # 5. Load Balancer Nginx (Round-Robin com suporte a WebSocket)
+  loadbalancer:
+    image: nginx:alpine
+    container_name: pet-tracker-loadbalancer
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./infrastructure/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - backend
+
+  # 6. Frontend Administrativo (React + TypeScript + Vite + Tailwind + Leaflet)
   frontend:
     build:
       context: ./frontend
@@ -68,9 +93,9 @@ services:
       - "80:80"
       - "5173:80"
     depends_on:
-      - backend
+      - loadbalancer
 
-  # 5. Simuladores de Dispositivos (Python 3 + Paho MQTT)
+  # 7. Simuladores de Dispositivos (Python 3 - Telemetria HTTP para InterSCity)
   simulators:
     build:
       context: ./simulators
@@ -80,11 +105,12 @@ services:
     environment:
       MQTT_HOST: mosquitto
       MQTT_PORT: 1883
+      INTERSCITY_URL: http://interscity:8000
       PYTHONUNBUFFERED: "1"
     depends_on:
-      mosquitto:
+      interscity:
         condition: service_started
-      backend:
+      loadbalancer:
         condition: service_started
 
 volumes:
